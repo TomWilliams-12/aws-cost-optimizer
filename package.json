@@ -1,0 +1,39 @@
+{
+  "name": "aws-cost-optimizer",
+  "version": "1.0.0",
+  "description": "AWS Cost Optimizer SaaS Platform",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "infrastructure"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm run install:frontend && npm run install:backend && npm run install:infrastructure",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && npm install", 
+    "install:infrastructure": "cd infrastructure && npm install",
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "deploy:dev": "npm run build:backend && cd infrastructure && npm run deploy:dev",
+    "deploy:prod": "npm run build:backend && cd infrastructure && npm run deploy:prod"
+  },
+  "devDependencies": {
+    "concurrently": "^7.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "keywords": [
+    "aws",
+    "cost-optimization",
+    "saas"
+  ],
+  "author": "Thomas Williams",
+  "license": "UNLICENSED"
+} 

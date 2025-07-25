@@ -167,12 +167,30 @@ export default function DashboardPage() {
             </div>
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="text-lg font-medium text-gray-900">Potential Savings</h3>
-              <p className="text-3xl font-bold text-green-600 mt-2">£0</p>
+              <p className="text-3xl font-bold text-green-600 mt-2">
+                {analysisResult ? (
+                  `£${(
+                    (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
+                    (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
+                    (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
+                    (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0)
+                  ).toFixed(0)}/mo`
+                ) : '£0'}
+              </p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-medium text-gray-900">Last Analysis</h3>
+              <h3 className="text-lg font-medium text-gray-900">Analysis Coverage</h3>
               <p className="text-sm text-gray-600 mt-2">
-                {(accounts?.length || 0) > 0 ? 'Today' : 'No analysis yet'}
+                {analysisResult ? (
+                  <span className="space-y-1">
+                    <div>✅ EBS Volumes</div>
+                    <div>✅ EC2 Instances</div>
+                    <div>✅ S3 Storage</div>
+                    <div>✅ Elastic IPs</div>
+                  </span>
+                ) : (
+                  (accounts?.length || 0) > 0 ? 'Run analysis to see coverage' : 'No analysis yet'
+                )}
               </p>
             </div>
           </div>
@@ -360,6 +378,105 @@ export default function DashboardPage() {
                     )}
                   </div>
 
+                  {/* S3 Storage Optimization Section */}
+                  <div>
+                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                      🗄️ S3 Storage Optimization
+                    </h4>
+                    {(analysisResult.s3Analysis?.length || 0) > 0 ? (
+                      <div className="space-y-4">
+                        {(analysisResult.s3Analysis || []).map((bucket: any) => (
+                          <div key={bucket.bucketName} className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <h5 className="font-medium text-gray-900">{bucket.bucketName}</h5>
+                                <div className="text-sm text-gray-600">
+                                  {(bucket.totalSize / (1024 * 1024 * 1024)).toFixed(2)} GB • {bucket.objectCount} objects • {bucket.region}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-green-600 font-bold">£{bucket.potentialSavings?.monthly?.toFixed(2) || '0.00'}/month</div>
+                                <div className="text-xs text-gray-500">potential savings</div>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                              <div className="flex items-center space-x-2">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  bucket.hasLifecyclePolicy ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                                }`}>
+                                  {bucket.hasLifecyclePolicy ? 'Has lifecycle policy' : 'No lifecycle policy'}
+                                </span>
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                Standard: {bucket.storageClassBreakdown?.standard?.size?.toFixed(1) || '0'} GB
+                              </div>
+                            </div>
+                            
+                            {bucket.recommendations?.length > 0 && (
+                              <div className="space-y-2">
+                                {bucket.recommendations.map((rec: any, index: number) => (
+                                  <div key={index} className="bg-white border border-purple-200 rounded p-3">
+                                    <div className="flex justify-between items-start mb-2">
+                                      <div className="text-sm font-medium text-gray-900">{rec.description}</div>
+                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                        rec.effort === 'low' ? 'bg-green-100 text-green-800' :
+                                        rec.effort === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-red-100 text-red-800'
+                                      }`}>
+                                        {rec.effort} effort
+                                      </span>
+                                    </div>
+                                    <div className="text-xs text-gray-600">{rec.details}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
+                        ✅ No S3 storage optimization opportunities found - storage is well-managed!
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Unused Elastic IPs Section */}
+                  <div>
+                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                      🌐 Unused Elastic IPs
+                    </h4>
+                    {(analysisResult.unusedElasticIPs?.length || 0) > 0 ? (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <div className="grid grid-cols-1 gap-3">
+                          {(analysisResult.unusedElasticIPs || []).map((ip: any) => (
+                            <div key={ip.allocationId} className="flex justify-between items-center p-3 bg-white rounded border">
+                              <div>
+                                <span className="font-medium text-sm">{ip.publicIp}</span>
+                                <span className="text-gray-600 text-sm ml-2">({ip.allocationId})</span>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-red-600 font-medium">£{ip.monthlyCost?.toFixed(2) || '3.65'}/month</div>
+                                <div className="text-xs text-gray-500">wasted cost</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 p-3 bg-red-100 rounded-md">
+                          <p className="text-sm text-red-800">
+                            💡 <strong>Quick win:</strong> These unassociated Elastic IPs are incurring charges. 
+                            Consider releasing them if they're not needed for failover or other purposes.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
+                        ✅ No unused Elastic IPs found - good resource management!
+                      </p>
+                    )}
+                  </div>
+
                   {/* Summary Section */}
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                     <h4 className="font-semibold text-gray-800 mb-3">💰 Total Potential Savings</h4>
@@ -368,7 +485,9 @@ export default function DashboardPage() {
                         <div className="text-2xl font-bold text-green-600">
                           £{(
                             (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
-                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0)
+                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
+                            (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
+                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0)
                           ).toFixed(2)}
                         </div>
                         <div className="text-sm text-gray-600">per month</div>
@@ -377,7 +496,9 @@ export default function DashboardPage() {
                         <div className="text-2xl font-bold text-green-600">
                           £{(
                             (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
-                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0)
+                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0) +
+                            (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.annual || 0), 0) +
+                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12
                           ).toFixed(2)}
                         </div>
                         <div className="text-sm text-gray-600">per year</div>

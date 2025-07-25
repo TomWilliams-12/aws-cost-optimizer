@@ -3,8 +3,9 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb'
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts'
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
-import { EC2Client, DescribeVolumesCommand, DescribeInstancesCommand, Instance } from '@aws-sdk/client-ec2'
+import { EC2Client, DescribeVolumesCommand, DescribeInstancesCommand, DescribeAddressesCommand, Instance } from '@aws-sdk/client-ec2'
 import { CloudWatchClient, GetMetricDataCommand, GetMetricStatisticsCommand, ListMetricsCommand } from '@aws-sdk/client-cloudwatch'
+import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetBucketLocationCommand, GetBucketLifecycleConfigurationCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import { v4 as uuidv4 } from 'uuid'
 import jwt from 'jsonwebtoken'
 import { createSuccessResponse, createErrorResponse } from '../utils/response'
@@ -124,6 +125,42 @@ interface EC2Recommendation {
   performanceImpact: 'none' | 'minimal' | 'moderate' | 'significant'
   gravitonWarning?: string
   workloadPattern: 'steady' | 'peaky' | 'dev-test' | 'unknown'
+}
+
+interface S3BucketAnalysis {
+  bucketName: string
+  region: string
+  totalSize: number
+  objectCount: number
+  hasLifecyclePolicy: boolean
+  storageClassBreakdown: {
+    standard: { size: number; cost: number }
+    ia: { size: number; cost: number }
+    glacier: { size: number; cost: number }
+  }
+  recommendations: S3Recommendation[]
+  potentialSavings: {
+    monthly: number
+    annual: number
+  }
+}
+
+interface S3Recommendation {
+  type: 'lifecycle-policy' | 'storage-class-optimization'
+  description: string
+  potentialSavings: {
+    monthly: number
+    annual: number
+  }
+  effort: 'low' | 'medium' | 'high'
+  details: string
+}
+
+interface UnusedElasticIP {
+  allocationId: string
+  publicIp: string
+  associatedInstanceId?: string
+  monthlyCost: number
 }
 
 // Analyze EC2 instances for rightsizing recommendations
@@ -491,6 +528,254 @@ function findOptimalInstanceType(
   return suitableTypes.length > 0 ? suitableTypes[0].type : null
 }
 
+// S3 storage pricing (USD per GB per month)
+const S3_PRICING = {
+  standard: 0.023,
+  ia: 0.0125,        // Standard-IA
+  glacier: 0.004,    // Glacier Instant Retrieval
+  deepArchive: 0.00099  // Glacier Deep Archive
+}
+
+// Analyze S3 buckets for storage optimization opportunities
+async function analyzeS3Storage(s3Client: S3Client, region: string): Promise<S3BucketAnalysis[]> {
+  const bucketAnalyses: S3BucketAnalysis[] = []
+  
+  try {
+    // List all buckets
+    const { Buckets } = await s3Client.send(new ListBucketsCommand({}))
+    console.log(`Found ${Buckets?.length || 0} S3 buckets`)
+    
+    for (const bucket of Buckets || []) {
+      if (!bucket.Name) continue
+      
+      try {
+        console.log(`Analyzing S3 bucket: ${bucket.Name}`)
+        
+        // Get bucket location
+        let bucketRegion = region
+        try {
+          const { LocationConstraint } = await s3Client.send(new GetBucketLocationCommand({
+            Bucket: bucket.Name
+          }))
+          bucketRegion = LocationConstraint || 'us-east-1'
+        } catch (error) {
+          console.log(`Could not get location for bucket ${bucket.Name}, using default region`)
+        }
+        
+        // Check for existing lifecycle policy
+        let hasLifecyclePolicy = false
+        try {
+          await s3Client.send(new GetBucketLifecycleConfigurationCommand({
+            Bucket: bucket.Name
+          }))
+          hasLifecyclePolicy = true
+        } catch (error) {
+          // No lifecycle policy exists
+        }
+        
+        // Analyze objects in bucket (sample first 1000 objects)
+        const objectAnalysis = await analyzeBucketObjects(s3Client, bucket.Name)
+        
+        const bucketAnalysis: S3BucketAnalysis = {
+          bucketName: bucket.Name,
+          region: bucketRegion,
+          totalSize: objectAnalysis.totalSize,
+          objectCount: objectAnalysis.objectCount,
+          hasLifecyclePolicy,
+          storageClassBreakdown: objectAnalysis.storageClassBreakdown,
+          recommendations: generateS3Recommendations(objectAnalysis, hasLifecyclePolicy),
+          potentialSavings: {
+            monthly: 0,
+            annual: 0
+          }
+        }
+        
+        // Calculate potential savings
+        const savings = calculateS3Savings(bucketAnalysis)
+        bucketAnalysis.potentialSavings = savings
+        
+        bucketAnalyses.push(bucketAnalysis)
+        
+      } catch (error) {
+        console.error(`Error analyzing bucket ${bucket.Name}:`, error)
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error listing S3 buckets:', error)
+  }
+  
+  console.log(`Completed S3 analysis for ${bucketAnalyses.length} buckets`)
+  return bucketAnalyses
+}
+
+// Analyze objects in a bucket to understand storage patterns
+async function analyzeBucketObjects(s3Client: S3Client, bucketName: string) {
+  const analysis = {
+    totalSize: 0,
+    objectCount: 0,
+    storageClassBreakdown: {
+      standard: { size: 0, cost: 0 },
+      ia: { size: 0, cost: 0 },
+      glacier: { size: 0, cost: 0 }
+    },
+    objectAgeDistribution: {
+      recent: 0,      // < 30 days
+      medium: 0,      // 30-90 days  
+      old: 0,         // 90+ days
+    }
+  }
+  
+  try {
+    let continuationToken: string | undefined
+    let objectsAnalyzed = 0
+    const maxObjects = 1000 // Limit analysis to prevent timeouts
+    
+    do {
+      const { Contents, NextContinuationToken } = await s3Client.send(new ListObjectsV2Command({
+        Bucket: bucketName,
+        MaxKeys: Math.min(1000, maxObjects - objectsAnalyzed),
+        ContinuationToken: continuationToken
+      }))
+      
+      if (!Contents) break
+      
+      for (const obj of Contents) {
+        if (!obj.Key || !obj.Size) continue
+        
+        objectsAnalyzed++
+        analysis.objectCount++
+        analysis.totalSize += obj.Size
+        
+        // Determine storage class
+        const storageClass = obj.StorageClass || 'STANDARD'
+        const sizeInGB = obj.Size / (1024 * 1024 * 1024)
+        
+        if (storageClass === 'STANDARD') {
+          analysis.storageClassBreakdown.standard.size += sizeInGB
+          analysis.storageClassBreakdown.standard.cost += sizeInGB * S3_PRICING.standard
+        } else if (storageClass.includes('IA')) {
+          analysis.storageClassBreakdown.ia.size += sizeInGB
+          analysis.storageClassBreakdown.ia.cost += sizeInGB * S3_PRICING.ia
+        } else if (storageClass.includes('GLACIER')) {
+          analysis.storageClassBreakdown.glacier.size += sizeInGB
+          analysis.storageClassBreakdown.glacier.cost += sizeInGB * S3_PRICING.glacier
+        }
+        
+        // Analyze object age
+        if (obj.LastModified) {
+          const ageInDays = (Date.now() - obj.LastModified.getTime()) / (1000 * 60 * 60 * 24)
+          if (ageInDays < 30) {
+            analysis.objectAgeDistribution.recent++
+          } else if (ageInDays < 90) {
+            analysis.objectAgeDistribution.medium++
+          } else {
+            analysis.objectAgeDistribution.old++
+          }
+        }
+      }
+      
+      continuationToken = NextContinuationToken
+    } while (continuationToken && objectsAnalyzed < maxObjects)
+    
+    console.log(`Analyzed ${objectsAnalyzed} objects in bucket ${bucketName}`)
+    
+  } catch (error) {
+    console.error(`Error analyzing objects in bucket ${bucketName}:`, error)
+  }
+  
+  return analysis
+}
+
+// Generate S3 optimization recommendations
+function generateS3Recommendations(
+  objectAnalysis: any,
+  hasLifecyclePolicy: boolean
+): S3Recommendation[] {
+  const recommendations: S3Recommendation[] = []
+  
+  // Check if lifecycle policy would be beneficial
+  if (!hasLifecyclePolicy && objectAnalysis.objectAgeDistribution.old > 0) {
+    const oldObjectsPercent = (objectAnalysis.objectAgeDistribution.old / objectAnalysis.objectCount) * 100
+    
+    if (oldObjectsPercent > 20) {
+      recommendations.push({
+        type: 'lifecycle-policy',
+        description: `Implement lifecycle policy to automatically transition objects older than 90 days`,
+        potentialSavings: {
+          monthly: 0, // Will be calculated
+          annual: 0
+        },
+        effort: 'low',
+        details: `${oldObjectsPercent.toFixed(1)}% of objects are older than 90 days and could benefit from automatic transitions to IA or Glacier storage classes.`
+      })
+    }
+  }
+  
+  // Check for Standard storage that could be moved to IA
+  if (objectAnalysis.storageClassBreakdown.standard.size > 1) { // More than 1GB in Standard
+    const potentialIATransition = objectAnalysis.storageClassBreakdown.standard.size * 0.3 // Assume 30% could move to IA
+    const monthlySavings = potentialIATransition * (S3_PRICING.standard - S3_PRICING.ia)
+    
+    if (monthlySavings > 1) { // More than $1/month savings
+      recommendations.push({
+        type: 'storage-class-optimization',
+        description: `Transition infrequently accessed objects to Standard-IA storage class`,
+        potentialSavings: {
+          monthly: monthlySavings,
+          annual: monthlySavings * 12
+        },
+        effort: 'medium',
+        details: `Approximately ${potentialIATransition.toFixed(1)} GB could be moved to Standard-IA, saving ${(S3_PRICING.standard - S3_PRICING.ia).toFixed(4)} per GB per month.`
+      })
+    }
+  }
+  
+  return recommendations
+}
+
+// Calculate total potential savings for S3 bucket
+function calculateS3Savings(bucketAnalysis: S3BucketAnalysis): { monthly: number; annual: number } {
+  const totalMonthlySavings = bucketAnalysis.recommendations.reduce(
+    (sum, rec) => sum + rec.potentialSavings.monthly, 0
+  )
+  
+  return {
+    monthly: Math.round(totalMonthlySavings * 100) / 100,
+    annual: Math.round(totalMonthlySavings * 12 * 100) / 100
+  }
+}
+
+// Analyze unused Elastic IPs
+async function analyzeUnusedElasticIPs(ec2Client: EC2Client): Promise<UnusedElasticIP[]> {
+  const unusedIPs: UnusedElasticIP[] = []
+  
+  try {
+    const { Addresses } = await ec2Client.send(new DescribeAddressesCommand({}))
+    
+    console.log(`Found ${Addresses?.length || 0} Elastic IP addresses`)
+    
+    for (const address of Addresses || []) {
+      // Check if the Elastic IP is not associated with any instance
+      if (!address.InstanceId && !address.NetworkInterfaceId) {
+        unusedIPs.push({
+          allocationId: address.AllocationId || '',
+          publicIp: address.PublicIp || '',
+          associatedInstanceId: undefined,
+          monthlyCost: 3.65 // $0.005 per hour * 24 hours * 30.44 days = $3.65/month
+        })
+      }
+    }
+    
+    console.log(`Found ${unusedIPs.length} unused Elastic IP addresses`)
+    
+  } catch (error) {
+    console.error('Error analyzing Elastic IPs:', error)
+  }
+  
+  return unusedIPs
+}
+
 export const handler = async (
   event: any,
   context: Context
@@ -545,6 +830,15 @@ export const handler = async (
       },
     })
 
+    const s3Client = new S3Client({
+      region: account.region,
+      credentials: {
+        accessKeyId: credentials.Credentials!.AccessKeyId!,
+        secretAccessKey: credentials.Credentials!.SecretAccessKey!,
+        sessionToken: credentials.Credentials!.SessionToken!,
+      },
+    })
+
     // 3. Perform the analysis
     const analysisId = uuidv4()
     const analysisStartTime = new Date().toISOString()
@@ -580,11 +874,20 @@ export const handler = async (
     console.log(`Found ${instances.length} running EC2 instances for analysis`)
     const ec2Recommendations = await analyzeEC2Instances(instances, cloudWatchClient, account.region)
 
+    // Analyze S3 buckets for storage optimization
+    console.log('Starting S3 storage analysis...')
+    const s3Analysis = await analyzeS3Storage(s3Client, account.region)
+
+    // Analyze unused Elastic IPs
+    console.log('Analyzing unused Elastic IPs...')
+    const unusedElasticIPs = await analyzeUnusedElasticIPs(ec2Client)
 
     // 4. Store the results in DynamoDB
     const analysisResult = {
       unattachedVolumes,
       ec2Recommendations,
+      s3Analysis,
+      unusedElasticIPs,
     }
 
     const analysisFinishTime = new Date().toISOString();

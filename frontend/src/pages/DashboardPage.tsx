@@ -246,24 +246,146 @@ export default function DashboardPage() {
           {/* Analysis Result Modal */}
           {showAnalysisResult && analysisResult && (
             <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Analysis Results</h3>
-                <div className="space-y-4">
-                  {(analysisResult.unattachedVolumes?.length || 0) > 0 ? (
-                    <div>
-                      <h4 className="font-semibold">Unattached EBS Volumes</h4>
-                      <ul className="list-disc list-inside">
-                        {(analysisResult.unattachedVolumes || []).map((vol: any) => (
-                          <li key={vol.volumeId}>
-                            {vol.volumeId} ({vol.size} GB) - Potential savings: £{vol.potentialSavings?.toFixed(2) || '0.00'}
-                          </li>
+              <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Cost Optimization Analysis Results</h3>
+                
+                <div className="space-y-6">
+                  {/* EBS Volumes Section */}
+                  <div>
+                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                      💾 Unattached EBS Volumes
+                    </h4>
+                    {(analysisResult.unattachedVolumes?.length || 0) > 0 ? (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                        <div className="grid grid-cols-1 gap-3">
+                          {(analysisResult.unattachedVolumes || []).map((vol: any) => (
+                            <div key={vol.volumeId} className="flex justify-between items-center p-3 bg-white rounded border">
+                              <div>
+                                <span className="font-medium text-sm">{vol.volumeId}</span>
+                                <span className="text-gray-600 text-sm ml-2">({vol.size} GB)</span>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-green-600 font-medium">£{vol.potentialSavings?.toFixed(2) || '0.00'}/month</div>
+                                <div className="text-xs text-gray-500">savings</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
+                        ✅ No unattached EBS volumes found - good resource management!
+                      </p>
+                    )}
+                  </div>
+
+                  {/* EC2 Rightsizing Section */}
+                  <div>
+                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                      🖥️ EC2 Rightsizing Recommendations
+                    </h4>
+                    {(analysisResult.ec2Recommendations?.length || 0) > 0 ? (
+                      <div className="space-y-4">
+                        {(analysisResult.ec2Recommendations || []).map((rec: any) => (
+                          <div key={rec.instanceId} className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <h5 className="font-medium text-gray-900">{rec.instanceId}</h5>
+                                <div className="text-sm text-gray-600">
+                                  {rec.currentInstanceType} → {rec.recommendedInstanceType}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-green-600 font-bold">£{rec.potentialSavings?.monthly?.toFixed(2) || '0.00'}/month</div>
+                                <div className="text-xs text-gray-500">({rec.potentialSavings?.percentage?.toFixed(1) || '0'}% savings)</div>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
+                              <div className="flex items-center space-x-2">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  rec.confidence === 'high' ? 'bg-green-100 text-green-800' :
+                                  rec.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {rec.confidence} confidence
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  rec.performanceImpact === 'none' ? 'bg-green-100 text-green-800' :
+                                  rec.performanceImpact === 'minimal' ? 'bg-yellow-100 text-yellow-800' :
+                                  rec.performanceImpact === 'moderate' ? 'bg-orange-100 text-orange-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {rec.performanceImpact} impact
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  rec.workloadPattern === 'steady' ? 'bg-blue-100 text-blue-800' :
+                                  rec.workloadPattern === 'peaky' ? 'bg-purple-100 text-purple-800' :
+                                  rec.workloadPattern === 'dev-test' ? 'bg-gray-100 text-gray-800' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {rec.workloadPattern} workload
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="text-sm text-gray-700 mb-3">
+                              <strong>Analysis:</strong> {rec.reasoning}
+                            </div>
+                            
+                            {rec.gravitonWarning && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
+                                <div className="flex items-start">
+                                  <div className="flex-shrink-0">
+                                    <span className="text-amber-400">⚠️</span>
+                                  </div>
+                                  <div className="ml-2">
+                                    <h6 className="text-sm font-medium text-amber-800">Graviton Migration Warning</h6>
+                                    <p className="text-sm text-amber-700 mt-1">{rec.gravitonWarning}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         ))}
-                      </ul>
+                      </div>
+                    ) : (
+                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
+                        ✅ No EC2 rightsizing opportunities found - instances are well-sized!
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Summary Section */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-gray-800 mb-3">💰 Total Potential Savings</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-2xl font-bold text-green-600">
+                          £{(
+                            (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
+                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0)
+                          ).toFixed(2)}
+                        </div>
+                        <div className="text-sm text-gray-600">per month</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-green-600">
+                          £{(
+                            (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
+                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0)
+                          ).toFixed(2)}
+                        </div>
+                        <div className="text-sm text-gray-600">per year</div>
+                      </div>
                     </div>
-                  ) : (
-                    <p>No unattached EBS volumes found.</p>
-                  )}
+                  </div>
                 </div>
+                
                 <div className="flex justify-end space-x-3 mt-6">
                   <button
                     onClick={() => setShowAnalysisResult(false)}

@@ -180,18 +180,18 @@ export default function DashboardPage() {
             </div>
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="text-lg font-medium text-gray-900">Analysis Coverage</h3>
-              <p className="text-sm text-gray-600 mt-2">
+              <div className="text-sm text-gray-600 mt-2">
                 {analysisResult ? (
-                  <span className="space-y-1">
+                  <div className="space-y-1">
                     <div>✅ EBS Volumes</div>
                     <div>✅ EC2 Instances</div>
                     <div>✅ S3 Storage</div>
                     <div>✅ Elastic IPs</div>
-                  </span>
+                  </div>
                 ) : (
-                  (accounts?.length || 0) > 0 ? 'Run analysis to see coverage' : 'No analysis yet'
+                  <p>{(accounts?.length || 0) > 0 ? 'Run analysis to see coverage' : 'No analysis yet'}</p>
                 )}
-              </p>
+              </div>
             </div>
           </div>
 

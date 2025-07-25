@@ -133,17 +133,27 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
-      <div className="bg-white shadow">
+      <div className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <h1 className="text-2xl font-bold text-gray-900">
-              🚀 {user?.name}'s Dashboard
-            </h1>
+          <div className="flex justify-between items-center py-6">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <span className="text-white font-bold text-lg">💰</span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">
+                    AWS Cost Optimizer
+                  </h1>
+                  <p className="text-sm text-gray-500">Welcome back, {user?.name}</p>
+                </div>
+              </div>
+            </div>
             <button
               onClick={handleLogout}
-              className="text-sm text-gray-500 hover:text-gray-700"
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
               Logout
             </button>
@@ -152,99 +162,222 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
+      <div className="max-w-7xl mx-auto py-8 sm:px-6 lg:px-8">
+        <div className="px-4 sm:px-0">
           <div className="mb-8">
-            <h2 className="text-3xl font-bold text-gray-900">Dashboard</h2>
-            <p className="text-gray-600 mt-1">Manage your AWS accounts and cost optimization</p>
+            <h2 className="text-3xl font-bold text-gray-900">Cost Optimization Dashboard</h2>
+            <p className="text-gray-600 mt-2 text-lg">Discover savings opportunities across your AWS infrastructure</p>
           </div>
 
-          {/* Stats Cards */}
+          {/* Enhanced Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-medium text-gray-900">Connected Accounts</h3>
-              <p className="text-3xl font-bold text-indigo-600 mt-2">{accounts?.length || 0}</p>
+            {/* Connected Accounts Card */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-200">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white text-xl">🔗</span>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Connected Accounts</h3>
+                  <p className="text-3xl font-bold text-gray-900 mt-1">{accounts?.length || 0}</p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="text-sm text-gray-600">
+                  {(accounts?.length || 0) === 0 ? 'Connect your first AWS account' : 'AWS accounts being monitored'}
+                </div>
+              </div>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-medium text-gray-900">Potential Savings</h3>
-              <p className="text-3xl font-bold text-green-600 mt-2">
-                {analysisResult ? (
-                  `£${(
-                    (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
-                    (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
-                    (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
-                    (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0)
-                  ).toFixed(0)}/mo`
-                ) : '£0'}
-              </p>
+
+            {/* Potential Savings Card */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-200">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-green-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white text-xl">💰</span>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Monthly Savings</h3>
+                  <p className="text-3xl font-bold text-green-600 mt-1">
+                    {analysisResult ? (
+                      `£${(
+                        (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
+                        (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
+                        (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
+                        (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0)
+                      ).toFixed(0)}`
+                    ) : '£0'}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="text-sm text-gray-600">
+                  {analysisResult ? 'Potential monthly cost reduction' : 'Run analysis to discover savings'}
+                </div>
+                {analysisResult && (
+                  <div className="text-xs text-green-600 font-medium mt-1">
+                    £{(
+                      (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
+                      (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0) +
+                      (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.annual || 0), 0) +
+                      (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12
+                    ).toFixed(0)} annually
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-medium text-gray-900">Analysis Coverage</h3>
-              <div className="text-sm text-gray-600 mt-2">
+
+            {/* Analysis Coverage Card */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-200">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white text-xl">📊</span>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Analysis Coverage</h3>
+                  <p className="text-3xl font-bold text-gray-900 mt-1">
+                    {analysisResult ? '4/4' : '0/4'}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4">
                 {analysisResult ? (
-                  <div className="space-y-1">
-                    <div>✅ EBS Volumes</div>
-                    <div>✅ EC2 Instances</div>
-                    <div>✅ S3 Storage</div>
-                    <div>✅ Elastic IPs</div>
+                  <div className="grid grid-cols-2 gap-1 text-xs">
+                    <div className="flex items-center text-green-600">
+                      <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                      EBS Volumes
+                    </div>
+                    <div className="flex items-center text-green-600">
+                      <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                      EC2 Instances
+                    </div>
+                    <div className="flex items-center text-green-600">
+                      <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                      S3 Storage
+                    </div>
+                    <div className="flex items-center text-green-600">
+                      <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                      Elastic IPs
+                    </div>
                   </div>
                 ) : (
-                  <p>{(accounts?.length || 0) > 0 ? 'Run analysis to see coverage' : 'No analysis yet'}</p>
+                  <div className="text-sm text-gray-600">
+                    {(accounts?.length || 0) > 0 ? 'Run analysis to see coverage' : 'No analysis yet'}
+                  </div>
                 )}
               </div>
             </div>
           </div>
 
-          {/* AWS Accounts */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200">
+          {/* AWS Accounts Section */}
+          <div className="bg-white rounded-xl shadow-lg border border-gray-100">
+            <div className="px-6 py-5 border-b border-gray-200">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium text-gray-900">AWS Accounts</h3>
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">AWS Accounts</h3>
+                  <p className="text-sm text-gray-500 mt-1">Manage and monitor your connected AWS accounts</p>
+                </div>
                 <button
                   onClick={() => setShowAddAccount(true)}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700"
+                  className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 shadow-md hover:shadow-lg"
                 >
+                  <span className="mr-2">+</span>
                   Add Account
                 </button>
               </div>
             </div>
 
-            <div className="px-6 py-4">
-              {isLoading && <div className="text-center py-12">Loading...</div>}
-              {error && <div className="text-red-500 text-center py-12">{error}</div>}
-              {!isLoading && !error && (accounts?.length || 0) === 0 ? (
+            <div className="px-6 py-6">
+              {isLoading && (
                 <div className="text-center py-12">
-                  <div className="text-gray-400 text-lg mb-4">🔗</div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No AWS accounts connected</h3>
-                  <p className="text-gray-600 mb-4">
-                    Connect your first AWS account to start optimizing costs
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  <p className="mt-4 text-gray-600">Loading your AWS accounts...</p>
+                </div>
+              )}
+              {error && (
+                <div className="text-center py-12">
+                  <div className="text-red-400 text-4xl mb-4">⚠️</div>
+                  <h3 className="text-lg font-medium text-red-900 mb-2">Error Loading Accounts</h3>
+                  <p className="text-red-600">{error}</p>
+                </div>
+              )}
+              {!isLoading && !error && (accounts?.length || 0) === 0 ? (
+                <div className="text-center py-16">
+                  <div className="w-16 h-16 mx-auto mb-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center">
+                    <span className="text-3xl">🔗</span>
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-900 mb-3">No AWS accounts connected</h3>
+                  <p className="text-gray-600 mb-6 max-w-md mx-auto">
+                    Connect your first AWS account to start discovering cost optimization opportunities across your infrastructure
                   </p>
                   <button
                     onClick={() => setShowAddAccount(true)}
-                    className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700"
+                    className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 shadow-md hover:shadow-lg"
                   >
+                    <span className="mr-2">+</span>
                     Connect AWS Account
                   </button>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {(accounts || []).map((account) => (
-                    <div key={account.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div>
-                        <h4 className="font-medium text-gray-900">{account.accountName}</h4>
-                        <p className="text-sm text-gray-600">Status: {account.status}</p>
-                      </div>
-                      <div className="flex space-x-2">
-                        <button 
-                          onClick={() => handleAnalyze(account.id)}
-                          disabled={analyzingAccountId === account.id}
-                          className="text-indigo-600 hover:text-indigo-800 text-sm disabled:opacity-50"
-                        >
-                          {analyzingAccountId === account.id ? 'Analyzing...' : 'Analyze'}
-                        </button>
-                        <button className="text-red-600 hover:text-red-800 text-sm">
-                          Remove
-                        </button>
+                    <div key={account.id} className="bg-gradient-to-r from-gray-50 to-blue-50 border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-4">
+                          <div className="w-12 h-12 bg-gradient-to-r from-orange-400 to-orange-500 rounded-lg flex items-center justify-center">
+                            <span className="text-white font-bold text-lg">AWS</span>
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-semibold text-gray-900">{account.accountName}</h4>
+                            <div className="flex items-center space-x-2 mt-1">
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                account.status === 'active' ? 'bg-green-100 text-green-800' : 
+                                account.status === 'error' ? 'bg-red-100 text-red-800' : 
+                                'bg-yellow-100 text-yellow-800'
+                              }`}>
+                                {account.status === 'active' ? '✅ Active' : 
+                                 account.status === 'error' ? '❌ Error' : 
+                                 '⏳ Inactive'}
+                              </span>
+                              {account.lastAnalyzed && (
+                                <span className="text-xs text-gray-500">
+                                  Last analyzed: {new Date(account.lastAnalyzed).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <button 
+                            onClick={() => handleAnalyze(account.id)}
+                            disabled={analyzingAccountId === account.id}
+                            className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                              analyzingAccountId === account.id
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-md hover:shadow-lg'
+                            }`}
+                          >
+                            {analyzingAccountId === account.id ? (
+                              <>
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400 mr-2"></div>
+                                Analyzing...
+                              </>
+                            ) : (
+                              <>
+                                <span className="mr-2">🔍</span>
+                                Analyze
+                              </>
+                            )}
+                          </button>
+                          <button className="inline-flex items-center px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors duration-200">
+                            Remove
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

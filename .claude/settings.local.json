@@ -4,7 +4,10 @@
       "Bash(source .env)",
       "Bash(npx serverless:*)",
       "Bash(JWT_SECRET=dev-jwt-secret STRIPE_SECRET_KEY=sk_test_placeholder STRIPE_WEBHOOK_SECRET=whsec_placeholder npx serverless offline --stage dev)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)"
     ],
     "deny": []
   }

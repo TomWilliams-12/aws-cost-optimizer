@@ -6,6 +6,8 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { EC2Client, DescribeVolumesCommand, DescribeInstancesCommand, DescribeAddressesCommand, Instance } from '@aws-sdk/client-ec2'
 import { CloudWatchClient, GetMetricDataCommand, GetMetricStatisticsCommand, ListMetricsCommand } from '@aws-sdk/client-cloudwatch'
 import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetBucketLocationCommand, GetBucketLifecycleConfigurationCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import { ElasticLoadBalancingV2Client, DescribeLoadBalancersCommand, DescribeTargetHealthCommand, DescribeTargetGroupsCommand } from '@aws-sdk/client-elastic-load-balancing-v2'
+import { ElasticLoadBalancingClient, DescribeLoadBalancersCommand as DescribeClassicLoadBalancersCommand } from '@aws-sdk/client-elastic-load-balancing'
 import { v4 as uuidv4 } from 'uuid'
 import jwt from 'jsonwebtoken'
 import { createSuccessResponse, createErrorResponse } from '../utils/response'
@@ -161,6 +163,33 @@ interface UnusedElasticIP {
   publicIp: string
   associatedInstanceId?: string
   monthlyCost: number
+}
+
+interface LoadBalancerAnalysis {
+  loadBalancerArn: string
+  loadBalancerName: string
+  type: 'application' | 'network' | 'classic'
+  scheme: 'internet-facing' | 'internal'
+  state: string
+  createdTime?: Date
+  targetGroups: {
+    targetGroupArn?: string
+    targetGroupName?: string
+    healthyTargets: number
+    unhealthyTargets: number
+    totalTargets: number
+  }[]
+  metrics: {
+    requestCount: number
+    activeConnectionCount: number
+    targetResponseTime?: number
+    dataPointsAnalyzed: number
+  }
+  recommendation: 'keep' | 'review' | 'consider-removal'
+  reasoning: string
+  monthlyCost: number
+  potentialSavings: number
+  confidenceLevel: 'high' | 'medium' | 'low'
 }
 
 // Analyze EC2 instances for rightsizing recommendations
@@ -776,6 +805,363 @@ async function analyzeUnusedElasticIPs(ec2Client: EC2Client): Promise<UnusedElas
   return unusedIPs
 }
 
+// Load balancer pricing (USD per hour)
+const LOAD_BALANCER_PRICING = {
+  application: 0.0225,    // ALB: $0.0225 per hour
+  network: 0.0225,       // NLB: $0.0225 per hour  
+  classic: 0.025         // Classic: $0.025 per hour
+}
+
+// Analyze load balancers for idle/unused resources
+async function analyzeLoadBalancers(
+  elbv2Client: ElasticLoadBalancingV2Client,
+  elbClassicClient: ElasticLoadBalancingClient,
+  cloudWatchClient: CloudWatchClient,
+  region: string
+): Promise<LoadBalancerAnalysis[]> {
+  const analyses: LoadBalancerAnalysis[] = []
+  
+  try {
+    // Analyze ALB and NLB (v2)
+    const { LoadBalancers: v2LoadBalancers } = await elbv2Client.send(new DescribeLoadBalancersCommand({}))
+    console.log(`Found ${v2LoadBalancers?.length || 0} ALB/NLB load balancers`)
+    
+    for (const lb of v2LoadBalancers || []) {
+      if (!lb.LoadBalancerArn || !lb.LoadBalancerName) continue
+      
+      try {
+        console.log(`Analyzing load balancer: ${lb.LoadBalancerName}`)
+        
+        // Get target groups for this load balancer
+        const { TargetGroups } = await elbv2Client.send(new DescribeTargetGroupsCommand({
+          LoadBalancerArns: [lb.LoadBalancerArn]
+        }))
+        
+        const targetGroupsAnalysis = []
+        for (const tg of TargetGroups || []) {
+          if (!tg.TargetGroupArn) continue
+          
+          // Get target health
+          const { TargetHealthDescriptions } = await elbv2Client.send(new DescribeTargetHealthCommand({
+            TargetGroupArn: tg.TargetGroupArn
+          }))
+          
+          const healthyTargets = TargetHealthDescriptions?.filter(t => t.TargetHealth?.State === 'healthy').length || 0
+          const unhealthyTargets = TargetHealthDescriptions?.filter(t => t.TargetHealth?.State === 'unhealthy').length || 0
+          const totalTargets = TargetHealthDescriptions?.length || 0
+          
+          targetGroupsAnalysis.push({
+            targetGroupArn: tg.TargetGroupArn,
+            targetGroupName: tg.TargetGroupName,
+            healthyTargets,
+            unhealthyTargets,
+            totalTargets
+          })
+        }
+        
+        // Get CloudWatch metrics for the load balancer
+        const metrics = await getLoadBalancerMetrics(cloudWatchClient, lb.LoadBalancerArn, lb.Type as 'application' | 'network')
+        
+        // Generate recommendation
+        const analysis = generateLoadBalancerRecommendation(lb, targetGroupsAnalysis, metrics)
+        analyses.push(analysis)
+        
+      } catch (error) {
+        console.error(`Error analyzing load balancer ${lb.LoadBalancerName}:`, error)
+      }
+    }
+    
+    // Analyze Classic Load Balancers
+    const { LoadBalancerDescriptions: classicLoadBalancers } = await elbClassicClient.send(new DescribeClassicLoadBalancersCommand({}))
+    console.log(`Found ${classicLoadBalancers?.length || 0} Classic load balancers`)
+    
+    for (const clb of classicLoadBalancers || []) {
+      if (!clb.LoadBalancerName) continue
+      
+      try {
+        console.log(`Analyzing Classic load balancer: ${clb.LoadBalancerName}`)
+        
+        // Classic LBs don't have target groups, use instances
+        const targetGroupsAnalysis = [{
+          healthyTargets: clb.Instances?.length || 0,
+          unhealthyTargets: 0,
+          totalTargets: clb.Instances?.length || 0
+        }]
+        
+        // Get CloudWatch metrics for classic load balancer
+        const metrics = await getClassicLoadBalancerMetrics(cloudWatchClient, clb.LoadBalancerName)
+        
+        // Generate recommendation
+        const analysis = generateClassicLoadBalancerRecommendation(clb, targetGroupsAnalysis, metrics)
+        analyses.push(analysis)
+        
+      } catch (error) {
+        console.error(`Error analyzing Classic load balancer ${clb.LoadBalancerName}:`, error)
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error analyzing load balancers:', error)
+  }
+  
+  console.log(`Completed load balancer analysis for ${analyses.length} load balancers`)
+  return analyses
+}
+
+// Get CloudWatch metrics for ALB/NLB
+async function getLoadBalancerMetrics(
+  cloudWatchClient: CloudWatchClient,
+  loadBalancerArn: string,
+  type: 'application' | 'network'
+): Promise<{ requestCount: number; activeConnectionCount: number; targetResponseTime?: number; dataPointsAnalyzed: number }> {
+  const endTime = new Date()
+  const startTime = new Date(endTime.getTime() - (7 * 24 * 60 * 60 * 1000)) // 7 days ago
+  
+  // Extract load balancer name from ARN for CloudWatch
+  const lbName = loadBalancerArn.split('/').slice(-3).join('/')
+  
+  try {
+    const namespace = type === 'application' ? 'AWS/ApplicationELB' : 'AWS/NetworkELB'
+    
+    // Get request count or processed bytes
+    const primaryMetric = type === 'application' ? 'RequestCount' : 'ProcessedBytes'
+    const requestMetrics = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+      Namespace: namespace,
+      MetricName: primaryMetric,
+      Dimensions: [
+        {
+          Name: 'LoadBalancer',
+          Value: lbName
+        }
+      ],
+      StartTime: startTime,
+      EndTime: endTime,
+      Period: 3600, // 1 hour periods
+      Statistics: ['Sum']
+    }))
+    
+    const requestCount = requestMetrics.Datapoints?.reduce((sum, dp) => sum + (dp.Sum || 0), 0) || 0
+    
+    // Get active connection count
+    const connectionMetrics = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+      Namespace: namespace,
+      MetricName: type === 'application' ? 'ActiveConnectionCount' : 'ActiveFlowCount',
+      Dimensions: [
+        {
+          Name: 'LoadBalancer',
+          Value: lbName
+        }
+      ],
+      StartTime: startTime,
+      EndTime: endTime,
+      Period: 3600,
+      Statistics: ['Average']
+    }))
+    
+    const activeConnectionCount = connectionMetrics.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0
+    
+    // Get target response time for ALB
+    let targetResponseTime: number | undefined
+    if (type === 'application') {
+      const responseTimeMetrics = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+        Namespace: 'AWS/ApplicationELB',
+        MetricName: 'TargetResponseTime',
+        Dimensions: [
+          {
+            Name: 'LoadBalancer',
+            Value: lbName
+          }
+        ],
+        StartTime: startTime,
+        EndTime: endTime,
+        Period: 3600,
+        Statistics: ['Average']
+      }))
+      
+      targetResponseTime = responseTimeMetrics.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0
+    }
+    
+    return {
+      requestCount,
+      activeConnectionCount,
+      targetResponseTime,
+      dataPointsAnalyzed: requestMetrics.Datapoints?.length || 0
+    }
+    
+  } catch (error) {
+    console.error(`Error fetching metrics for load balancer ${lbName}:`, error)
+    return {
+      requestCount: 0,
+      activeConnectionCount: 0,
+      dataPointsAnalyzed: 0
+    }
+  }
+}
+
+// Get CloudWatch metrics for Classic Load Balancer
+async function getClassicLoadBalancerMetrics(
+  cloudWatchClient: CloudWatchClient,
+  loadBalancerName: string
+): Promise<{ requestCount: number; activeConnectionCount: number; dataPointsAnalyzed: number }> {
+  const endTime = new Date()
+  const startTime = new Date(endTime.getTime() - (7 * 24 * 60 * 60 * 1000)) // 7 days ago
+  
+  try {
+    // Get request count
+    const requestMetrics = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+      Namespace: 'AWS/ELB',
+      MetricName: 'RequestCount',
+      Dimensions: [
+        {
+          Name: 'LoadBalancerName',
+          Value: loadBalancerName
+        }
+      ],
+      StartTime: startTime,
+      EndTime: endTime,
+      Period: 3600,
+      Statistics: ['Sum']
+    }))
+    
+    const requestCount = requestMetrics.Datapoints?.reduce((sum, dp) => sum + (dp.Sum || 0), 0) || 0
+    
+    return {
+      requestCount,
+      activeConnectionCount: 0, // Classic ELB doesn't have this metric
+      dataPointsAnalyzed: requestMetrics.Datapoints?.length || 0
+    }
+    
+  } catch (error) {
+    console.error(`Error fetching metrics for Classic load balancer ${loadBalancerName}:`, error)
+    return {
+      requestCount: 0,
+      activeConnectionCount: 0,
+      dataPointsAnalyzed: 0
+    }
+  }
+}
+
+// Generate recommendation for ALB/NLB
+function generateLoadBalancerRecommendation(
+  loadBalancer: any,
+  targetGroups: any[],
+  metrics: any
+): LoadBalancerAnalysis {
+  const totalTargets = targetGroups.reduce((sum, tg) => sum + tg.totalTargets, 0)
+  const healthyTargets = targetGroups.reduce((sum, tg) => sum + tg.healthyTargets, 0)
+  
+  const lbType = loadBalancer.Type as 'application' | 'network'
+  const monthlyCost = LOAD_BALANCER_PRICING[lbType] * 24 * 30.44 // 30.44 days average per month
+  
+  let recommendation: 'keep' | 'review' | 'consider-removal' = 'keep'
+  let reasoning = ''
+  let potentialSavings = 0
+  let confidenceLevel: 'high' | 'medium' | 'low' = 'medium'
+  
+  // Analysis logic
+  if (totalTargets === 0) {
+    recommendation = 'consider-removal'
+    reasoning = `No targets configured. Load balancer has been running without any targets.`
+    potentialSavings = monthlyCost
+    confidenceLevel = 'high'
+  } else if (healthyTargets === 0) {
+    recommendation = 'review'
+    reasoning = `All ${totalTargets} targets are unhealthy. Investigate if load balancer is needed.`
+    potentialSavings = monthlyCost * 0.8 // Conservative estimate
+    confidenceLevel = 'medium'
+  } else if (metrics.requestCount === 0 && metrics.dataPointsAnalyzed > 24) { // At least 24 hours of data
+    recommendation = 'consider-removal'
+    reasoning = `No requests in the last 7 days despite having ${healthyTargets} healthy targets. May be unused.`
+    potentialSavings = monthlyCost
+    confidenceLevel = 'high'
+  } else if (metrics.requestCount < 100 && metrics.dataPointsAnalyzed > 48) { // At least 48 hours of data
+    recommendation = 'review'
+    reasoning = `Very low traffic (${metrics.requestCount.toFixed(0)} requests in 7 days). Consider if load balancer is necessary.`
+    potentialSavings = monthlyCost * 0.5
+    confidenceLevel = 'medium'
+  } else {
+    reasoning = `Load balancer appears to be actively used with ${healthyTargets} healthy targets and ${metrics.requestCount.toFixed(0)} requests in 7 days.`
+  }
+  
+  if (metrics.dataPointsAnalyzed < 24) {
+    confidenceLevel = 'low'
+    reasoning += ` Limited metrics data available (${metrics.dataPointsAnalyzed} hours).`
+  }
+  
+  return {
+    loadBalancerArn: loadBalancer.LoadBalancerArn,
+    loadBalancerName: loadBalancer.LoadBalancerName,
+    type: lbType,
+    scheme: loadBalancer.Scheme,
+    state: loadBalancer.State?.Code || 'unknown',
+    createdTime: loadBalancer.CreatedTime,
+    targetGroups,
+    metrics,
+    recommendation,
+    reasoning,
+    monthlyCost,
+    potentialSavings,
+    confidenceLevel
+  }
+}
+
+// Generate recommendation for Classic Load Balancer
+function generateClassicLoadBalancerRecommendation(
+  loadBalancer: any,
+  targetGroups: any[],
+  metrics: any
+): LoadBalancerAnalysis {
+  const totalTargets = targetGroups[0]?.totalTargets || 0
+  const healthyTargets = targetGroups[0]?.healthyTargets || 0
+  
+  const monthlyCost = LOAD_BALANCER_PRICING.classic * 24 * 30.44
+  
+  let recommendation: 'keep' | 'review' | 'consider-removal' = 'keep'
+  let reasoning = ''
+  let potentialSavings = 0
+  let confidenceLevel: 'high' | 'medium' | 'low' = 'medium'
+  
+  if (totalTargets === 0) {
+    recommendation = 'consider-removal'
+    reasoning = `No instances registered. Classic load balancer appears unused.`
+    potentialSavings = monthlyCost
+    confidenceLevel = 'high'
+  } else if (metrics.requestCount === 0 && metrics.dataPointsAnalyzed > 24) {
+    recommendation = 'consider-removal'
+    reasoning = `No requests in the last 7 days despite having ${healthyTargets} instances. Consider migration to ALB/NLB or removal.`
+    potentialSavings = monthlyCost
+    confidenceLevel = 'high'
+  } else if (metrics.requestCount < 100 && metrics.dataPointsAnalyzed > 48) {
+    recommendation = 'review'
+    reasoning = `Very low traffic (${metrics.requestCount.toFixed(0)} requests in 7 days). Consider modernizing to ALB/NLB or removal.`
+    potentialSavings = monthlyCost * 0.5
+    confidenceLevel = 'medium'
+  } else {
+    reasoning = `Classic load balancer appears active with ${healthyTargets} instances and ${metrics.requestCount.toFixed(0)} requests in 7 days. Consider modernizing to ALB/NLB for better features and cost efficiency.`
+  }
+  
+  if (metrics.dataPointsAnalyzed < 24) {
+    confidenceLevel = 'low'
+    reasoning += ` Limited metrics data available (${metrics.dataPointsAnalyzed} hours).`
+  }
+  
+  return {
+    loadBalancerArn: `arn:aws:elasticloadbalancing:${loadBalancer.AvailabilityZones?.[0]?.split('-').slice(0, -1).join('-') || 'unknown'}:classic-lb/${loadBalancer.LoadBalancerName}`,
+    loadBalancerName: loadBalancer.LoadBalancerName,
+    type: 'classic',
+    scheme: loadBalancer.Scheme,
+    state: 'active',
+    createdTime: loadBalancer.CreatedTime,
+    targetGroups,
+    metrics,
+    recommendation,
+    reasoning,
+    monthlyCost,
+    potentialSavings,
+    confidenceLevel
+  }
+}
+
 export const handler = async (
   event: any,
   context: Context
@@ -839,6 +1225,24 @@ export const handler = async (
       },
     })
 
+    const elbv2Client = new ElasticLoadBalancingV2Client({
+      region: account.region,
+      credentials: {
+        accessKeyId: credentials.Credentials!.AccessKeyId!,
+        secretAccessKey: credentials.Credentials!.SecretAccessKey!,
+        sessionToken: credentials.Credentials!.SessionToken!,
+      },
+    })
+
+    const elbClassicClient = new ElasticLoadBalancingClient({
+      region: account.region,
+      credentials: {
+        accessKeyId: credentials.Credentials!.AccessKeyId!,
+        secretAccessKey: credentials.Credentials!.SecretAccessKey!,
+        sessionToken: credentials.Credentials!.SessionToken!,
+      },
+    })
+
     // 3. Perform the analysis
     const analysisId = uuidv4()
     const analysisStartTime = new Date().toISOString()
@@ -882,12 +1286,17 @@ export const handler = async (
     console.log('Analyzing unused Elastic IPs...')
     const unusedElasticIPs = await analyzeUnusedElasticIPs(ec2Client)
 
+    // Analyze load balancers for idle/unused resources
+    console.log('Analyzing load balancers...')
+    const loadBalancerAnalysis = await analyzeLoadBalancers(elbv2Client, elbClassicClient, cloudWatchClient, account.region)
+
     // 4. Store the results in DynamoDB
     const analysisResult = {
       unattachedVolumes,
       ec2Recommendations,
       s3Analysis,
       unusedElasticIPs,
+      loadBalancerAnalysis,
     }
 
     const analysisFinishTime = new Date().toISOString();

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { CheckCircle, Cloud, Settings, User } from 'lucide-react';
 
 interface AccountOnboardingWizardProps {

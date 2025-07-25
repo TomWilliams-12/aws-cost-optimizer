@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { Account } from '../types'
 import { AccountOnboardingWizard } from '../components/AccountOnboardingWizard'
+import { CostBreakdownChart } from '../components/CostBreakdownChart'
+import { SavingsImpactChart } from '../components/SavingsImpactChart'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
 
@@ -225,7 +227,8 @@ export default function DashboardPage() {
                           (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
                           (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
                           (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
-                          (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0)
+                          (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
+                          (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
                         ).toFixed(0)}`
                       ) : '£0'}
                     </p>
@@ -242,7 +245,8 @@ export default function DashboardPage() {
                       (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
                       (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0) +
                       (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.annual || 0), 0) +
-                      (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12
+                      (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12 +
+                      (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0) * 12
                     ).toFixed(0)} annually
                   </div>
                 )}
@@ -259,7 +263,7 @@ export default function DashboardPage() {
                   <div className="ml-3">
                     <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Resources</p>
                     <p className="text-2xl font-bold text-gray-900">
-                      {analysisResult ? '4/4' : '0/4'}
+                      {analysisResult ? '5/5' : '0/5'}
                     </p>
                   </div>
                 </div>
@@ -268,7 +272,7 @@ export default function DashboardPage() {
                 <div className="text-xs text-gray-600 mb-2">
                   {analysisResult ? 'All services analyzed' : 'Pending analysis'}
                 </div>
-                <div className="grid grid-cols-2 gap-1 text-xs">
+                <div className="grid grid-cols-3 gap-1 text-xs">
                   <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
                     <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
                     EBS
@@ -284,6 +288,10 @@ export default function DashboardPage() {
                   <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
                     <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
                     IPs
+                  </div>
+                  <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
+                    <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
+                    LBs
                   </div>
                 </div>
               </div>
@@ -303,7 +311,8 @@ export default function DashboardPage() {
                         (analysisResult.ec2Recommendations?.length || 0) +
                         (analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
                         (analysisResult.unusedElasticIPs?.length || 0) +
-                        (analysisResult.unattachedVolumes?.length || 0)
+                        (analysisResult.unattachedVolumes?.length || 0) +
+                        (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation === 'consider-removal' || lb.recommendation === 'review').length || 0)
                       ) : 0}
                     </p>
                   </div>
@@ -317,11 +326,11 @@ export default function DashboardPage() {
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs">
                       <span className="text-gray-500">High Impact</span>
-                      <span className="font-medium">{(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0)}</span>
+                      <span className="font-medium">{(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation === 'consider-removal').length || 0)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-gray-500">Medium Impact</span>
-                      <span className="font-medium">{analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0}</span>
+                      <span className="font-medium">{(analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation === 'review').length || 0)}</span>
                     </div>
                   </div>
                 )}
@@ -348,7 +357,7 @@ export default function DashboardPage() {
                           </div>
                           <div>
                             <p className="text-sm font-medium text-gray-900">Cost analysis completed</p>
-                            <p className="text-xs text-gray-500">Found {(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0) + (analysisResult.unattachedVolumes?.length || 0)} optimization opportunities</p>
+                            <p className="text-xs text-gray-500">Found {(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0) + (analysisResult.unattachedVolumes?.length || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)} optimization opportunities</p>
                           </div>
                         </div>
                         <span className="text-xs text-gray-400">Just now</span>
@@ -360,7 +369,7 @@ export default function DashboardPage() {
                           </div>
                           <div>
                             <p className="text-sm font-medium text-gray-900">AWS account analyzed</p>
-                            <p className="text-xs text-gray-500">Scanned EC2, S3, EBS, and Elastic IPs</p>
+                            <p className="text-xs text-gray-500">Scanned EC2, S3, EBS, Elastic IPs, and Load Balancers</p>
                           </div>
                         </div>
                         <span className="text-xs text-gray-400">Just now</span>
@@ -437,6 +446,12 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Charts and Visualizations */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <CostBreakdownChart analysisResult={analysisResult} />
+            <SavingsImpactChart analysisResult={analysisResult} />
           </div>
 
           {/* AWS Accounts Section */}
@@ -775,6 +790,118 @@ export default function DashboardPage() {
                     )}
                   </div>
 
+                  {/* Load Balancer Analysis Section */}
+                  <div>
+                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                      ⚖️ Load Balancer Analysis
+                    </h4>
+                    {(analysisResult.loadBalancerAnalysis?.length || 0) > 0 ? (
+                      <div className="space-y-4">
+                        {(analysisResult.loadBalancerAnalysis || []).map((lb: any) => (
+                          <div key={lb.loadBalancerArn} className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <h5 className="font-medium text-gray-900 flex items-center">
+                                  {lb.loadBalancerName}
+                                  <span className={`ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                    lb.type === 'application' ? 'bg-blue-100 text-blue-800' :
+                                    lb.type === 'network' ? 'bg-purple-100 text-purple-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {lb.type === 'application' ? 'ALB' : lb.type === 'network' ? 'NLB' : 'Classic'}
+                                  </span>
+                                </h5>
+                                <div className="text-sm text-gray-600 mt-1">
+                                  {lb.scheme} • {lb.targetGroups?.reduce((sum: number, tg: any) => sum + tg.totalTargets, 0) || 0} targets • {lb.state}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className={`font-bold ${lb.potentialSavings > 0 ? 'text-green-600' : 'text-gray-600'}`}>
+                                  {lb.potentialSavings > 0 ? `£${lb.potentialSavings?.toFixed(2)}/month` : 'In Use'}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  £{lb.monthlyCost?.toFixed(2)} monthly cost
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
+                              <div className="flex items-center space-x-2">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  lb.recommendation === 'keep' ? 'bg-green-100 text-green-800' :
+                                  lb.recommendation === 'review' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {lb.recommendation === 'keep' ? '✅ Keep' :
+                                   lb.recommendation === 'review' ? '⚠️ Review' :
+                                   '❌ Consider Removal'}
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  lb.confidenceLevel === 'high' ? 'bg-green-100 text-green-800' :
+                                  lb.confidenceLevel === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {lb.confidenceLevel} confidence
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <span className="text-xs text-gray-600">
+                                  {lb.metrics?.requestCount?.toFixed(0) || 0} requests (7d)
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="text-sm text-gray-700 mb-3">
+                              <strong>Analysis:</strong> {lb.reasoning}
+                            </div>
+                            
+                            {lb.targetGroups && lb.targetGroups.length > 0 && (
+                              <div className="bg-white border border-indigo-200 rounded p-3">
+                                <h6 className="text-sm font-medium text-gray-900 mb-2">Target Groups</h6>
+                                <div className="space-y-2">
+                                  {lb.targetGroups.map((tg: any, index: number) => (
+                                    <div key={tg.targetGroupArn || index} className="flex justify-between items-center text-xs">
+                                      <div>
+                                        <span className="font-medium">{tg.targetGroupName || `Target Group ${index + 1}`}</span>
+                                      </div>
+                                      <div className="flex space-x-4">
+                                        <span className="text-green-600">{tg.healthyTargets} healthy</span>
+                                        <span className="text-red-600">{tg.unhealthyTargets} unhealthy</span>
+                                        <span className="text-gray-500">{tg.totalTargets} total</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {lb.recommendation === 'consider-removal' && (
+                              <div className="mt-3 bg-red-50 border border-red-200 rounded-md p-3">
+                                <div className="flex items-start">
+                                  <div className="flex-shrink-0">
+                                    <span className="text-red-400">⚠️</span>
+                                  </div>
+                                  <div className="ml-2">
+                                    <h6 className="text-sm font-medium text-red-800">Potential Cost Savings</h6>
+                                    <p className="text-sm text-red-700 mt-1">
+                                      This load balancer could potentially be removed, saving £{lb.potentialSavings?.toFixed(2)} per month (£{(lb.potentialSavings * 12)?.toFixed(2)} annually).
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
+                        ✅ No idle load balancers found - resources are well-utilized!
+                      </p>
+                    )}
+                  </div>
+
                   {/* Summary Section */}
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                     <h4 className="font-semibold text-gray-800 mb-3">💰 Total Potential Savings</h4>
@@ -785,7 +912,8 @@ export default function DashboardPage() {
                             (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
                             (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
                             (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
-                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0)
+                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
+                            (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
                           ).toFixed(2)}
                         </div>
                         <div className="text-sm text-gray-600">per month</div>
@@ -796,7 +924,8 @@ export default function DashboardPage() {
                             (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
                             (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0) +
                             (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.annual || 0), 0) +
-                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12
+                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12 +
+                            (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0) * 12
                           ).toFixed(2)}
                         </div>
                         <div className="text-sm text-gray-600">per year</div>

@@ -16,7 +16,35 @@ export default function DashboardPage() {
   const [showAnalysisResult, setShowAnalysisResult] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<any>(null)
   const [analyzingAccountId, setAnalyzingAccountId] = useState<string | null>(null)
+  const [analysisFromCache, setAnalysisFromCache] = useState(false)
+  const [analysisDate, setAnalysisDate] = useState<string | null>(null)
   const { user, token, logout } = useAuth()
+
+  // Function to fetch latest analysis for an account
+  const fetchLatestAnalysis = async (accountId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/analysis/${accountId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        if (data.data?.result && data.data?.cached) {
+          setAnalysisResult(data.data.result)
+          setAnalysisFromCache(true)
+          setAnalysisDate(data.data.updatedAt || data.data.createdAt)
+          return data.data
+        }
+      }
+    } catch (error) {
+      console.log('No previous analysis found for account:', accountId)
+    }
+    return null
+  }
 
   useEffect(() => {
     const fetchAccounts = async () => {
@@ -38,7 +66,14 @@ export default function DashboardPage() {
         }
 
         const data = await response.json()
-        setAccounts(data.data?.accounts || [])
+        const fetchedAccounts = data.data?.accounts || []
+        setAccounts(fetchedAccounts)
+        
+        // Try to fetch latest analysis for the first connected account
+        if (fetchedAccounts.length > 0) {
+          const firstAccount = fetchedAccounts[0]
+          await fetchLatestAnalysis(firstAccount.accountId)
+        }
       } catch (err: any) {
         setError(err.message)
       } finally {
@@ -59,6 +94,10 @@ export default function DashboardPage() {
     try {
       setAnalyzingAccountId(accountId)
       setError(null)
+      // Reset cache flags for new analysis
+      setAnalysisFromCache(false)
+      setAnalysisDate(null)
+      
       const response = await fetch(`${API_URL}/analysis`, {
         method: 'POST',
         headers: {
@@ -75,6 +114,7 @@ export default function DashboardPage() {
 
       const data = await response.json()
       setAnalysisResult(data.data?.result)
+      setAnalysisDate(new Date().toISOString())
       setShowAnalysisResult(true)
     } catch (err: any) {
       setError(err.message)
@@ -353,14 +393,22 @@ export default function DashboardPage() {
                       <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
                         <div className="flex items-center">
                           <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-green-600 text-sm">✅</span>
+                            <span className="text-green-600 text-sm">{analysisFromCache ? '📁' : '✅'}</span>
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-gray-900">Cost analysis completed</p>
+                            <p className="text-sm font-medium text-gray-900">
+                              {analysisFromCache ? 'Previous analysis loaded' : 'Cost analysis completed'}
+                              {analysisFromCache && <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">Cached</span>}
+                            </p>
                             <p className="text-xs text-gray-500">Found {(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0) + (analysisResult.unattachedVolumes?.length || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)} optimization opportunities</p>
                           </div>
                         </div>
-                        <span className="text-xs text-gray-400">Just now</span>
+                        <span className="text-xs text-gray-400">
+                          {analysisFromCache && analysisDate ? 
+                            new Date(analysisDate).toLocaleDateString() : 
+                            'Just now'
+                          }
+                        </span>
                       </div>
                       <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
                         <div className="flex items-center">
@@ -578,7 +626,28 @@ export default function DashboardPage() {
           {showAnalysisResult && analysisResult && (
             <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
               <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Cost Optimization Analysis Results</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900">Cost Optimization Analysis Results</h3>
+                    {analysisFromCache && analysisDate && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        📁 Previous analysis from {new Date(analysisDate).toLocaleDateString()}
+                        <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">Cached</span>
+                      </p>
+                    )}
+                  </div>
+                  {analysisFromCache && accounts.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setShowAnalysisResult(false)
+                        handleAnalyze(accounts[0].accountId)
+                      }}
+                      className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition-colors"
+                    >
+                      Run Fresh Analysis
+                    </button>
+                  )}
+                </div>
                 
                 <div className="space-y-6">
                   {/* EBS Volumes Section */}

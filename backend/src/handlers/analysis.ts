@@ -1192,6 +1192,47 @@ function generateClassicLoadBalancerRecommendation(
   }
 }
 
+// Fetch latest analysis results for an account
+async function getLatestAnalysis(userId: string, accountId: string): Promise<any | null> {
+  try {
+    // For now, scan the table to find the latest analysis (we'll optimize with GSI later)
+    const { ScanCommand } = await import('@aws-sdk/lib-dynamodb')
+    
+    const result = await dynamo.send(new ScanCommand({
+      TableName: ANALYSES_TABLE,
+      FilterExpression: 'userId = :userId AND accountId = :accountId AND #status = :status',
+      ExpressionAttributeNames: {
+        '#status': 'status'
+      },
+      ExpressionAttributeValues: {
+        ':userId': userId,
+        ':accountId': accountId,
+        ':status': 'completed'
+      }
+    }))
+
+    if (result.Items && result.Items.length > 0) {
+      // Sort by updatedAt to get the most recent
+      const sortedItems = result.Items.sort((a, b) => 
+        new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+      )
+      
+      const latestAnalysis = sortedItems[0]
+      return {
+        analysisId: latestAnalysis.analysisId,
+        result: latestAnalysis.result,
+        createdAt: latestAnalysis.createdAt,
+        updatedAt: latestAnalysis.updatedAt
+      }
+    }
+
+    return null
+  } catch (error) {
+    console.error('Error fetching latest analysis:', error)
+    return null
+  }
+}
+
 export const handler = async (
   event: any,
   context: Context
@@ -1202,7 +1243,36 @@ export const handler = async (
     if (!user) {
       return createErrorResponse(401, 'Unauthorized');
     }
-    
+
+    // Handle GET request - fetch latest analysis
+    if (event.httpMethod === 'GET') {
+      const accountId = event.pathParameters?.accountId || event.queryStringParameters?.accountId
+      
+      if (!accountId) {
+        return createErrorResponse(400, 'accountId is required')
+      }
+
+      const latestAnalysis = await getLatestAnalysis(user.userId, accountId)
+      
+      if (latestAnalysis) {
+        return createSuccessResponse({
+          message: 'Latest analysis retrieved successfully',
+          analysisId: latestAnalysis.analysisId,
+          result: latestAnalysis.result,
+          createdAt: latestAnalysis.createdAt,
+          updatedAt: latestAnalysis.updatedAt,
+          cached: true
+        })
+      } else {
+        return createSuccessResponse({
+          message: 'No previous analysis found',
+          result: null,
+          cached: false
+        })
+      }
+    }
+
+    // Handle POST request - run new analysis
     const { accountId } = JSON.parse(event.body || '{}')
 
     if (!accountId) {

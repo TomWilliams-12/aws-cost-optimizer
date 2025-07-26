@@ -151,6 +151,19 @@ A beautifully designed, secure, and easy-to-use AWS cost optimization SaaS that 
 - [ ] Implementation progress tracking
 - [ ] Custom threshold alerting
 
+### **Automated Analysis**
+- [ ] **Scheduled Analysis Runs** *(High Value)*
+  - [ ] Daily/weekly/monthly automated scans
+  - [ ] Custom scheduling per account
+  - [ ] EventBridge-triggered Lambda functions
+  - [ ] Analysis result caching and persistence ✅ (Done in Phase 1)
+  - [ ] Email notifications for new findings
+  - [ ] Slack/Teams integration for alerts
+- [ ] **Drift Detection**
+  - [ ] Compare current state vs previous analysis
+  - [ ] Alert on new wasteful resources
+  - [ ] Track implementation of recommendations
+
 ---
 
 ## 🏢 **Phase 4: Enterprise Ready** *(Future)*

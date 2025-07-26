@@ -10,6 +10,28 @@ import { parseApiError, EnhancedError } from '../utils/errorHandling'
 import { ApiClient } from '../utils/retryLogic'
 import { ToastContainer, useToast } from '../components/Toast'
 import { CompactThemeToggle } from '../components/ThemeToggle'
+import {
+  OverviewIcon,
+  AccountsIcon,
+  AnalysisIcon,
+  RecommendationsIcon,
+  ReportsIcon,
+  SettingsIcon,
+  MoneyIcon,
+  LinkIcon,
+  LightbulbIcon,
+  TrendingUpIcon,
+  SearchIcon,
+  BellIcon,
+  HelpCircleIcon,
+  PlusIcon,
+  CheckCircleIcon,
+  RocketIcon,
+  HardDriveIcon,
+  ServerIcon,
+  GlobeIcon,
+  LogOutIcon
+} from '../components/Icons'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
 
@@ -25,7 +47,7 @@ type ViewMode = 'overview' | 'accounts' | 'analysis' | 'recommendations' | 'repo
 interface NavigationItem {
   id: ViewMode
   label: string
-  icon: string
+  icon: React.ComponentType<{ className?: string; size?: number }>
   badge?: number
   disabled?: boolean
 }
@@ -64,12 +86,12 @@ export default function DashboardPage() {
   ) : 0
 
   const navigationItems: NavigationItem[] = [
-    { id: 'overview', label: 'Overview', icon: '📊' },
-    { id: 'accounts', label: 'AWS Accounts', icon: '🔗', badge: accounts.length },
-    { id: 'analysis', label: 'Cost Analysis', icon: '🔍', badge: totalRecommendations || undefined },
-    { id: 'recommendations', label: 'Recommendations', icon: '💡', badge: totalRecommendations || undefined },
-    { id: 'reports', label: 'Reports', icon: '📋', disabled: true },
-    { id: 'settings', label: 'Settings', icon: '⚙️' }
+    { id: 'overview', label: 'Overview', icon: OverviewIcon },
+    { id: 'accounts', label: 'AWS Accounts', icon: AccountsIcon, badge: accounts.length },
+    { id: 'analysis', label: 'Cost Analysis', icon: AnalysisIcon, badge: totalRecommendations || undefined },
+    { id: 'recommendations', label: 'Recommendations', icon: RecommendationsIcon, badge: totalRecommendations || undefined },
+    { id: 'reports', label: 'Reports', icon: ReportsIcon, disabled: true },
+    { id: 'settings', label: 'Settings', icon: SettingsIcon }
   ]
 
   // Function to fetch latest analysis for an account
@@ -243,7 +265,7 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">per month</p>
             </div>
             <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg flex items-center justify-center">
-              <span className="text-emerald-600 dark:text-emerald-400 text-xl">💰</span>
+              <MoneyIcon className="text-emerald-600 dark:text-emerald-400" size={24} />
             </div>
           </div>
         </div>
@@ -256,7 +278,7 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">connected</p>
             </div>
             <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
-              <span className="text-blue-600 dark:text-blue-400 text-xl">🔗</span>
+              <LinkIcon className="text-blue-600 dark:text-blue-400" size={24} />
             </div>
           </div>
         </div>
@@ -269,7 +291,7 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">opportunities</p>
             </div>
             <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-center">
-              <span className="text-orange-600 dark:text-orange-400 text-xl">💡</span>
+              <LightbulbIcon className="text-orange-600 dark:text-orange-400" size={24} />
             </div>
           </div>
         </div>
@@ -282,7 +304,7 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">per year</p>
             </div>
             <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
-              <span className="text-purple-600 dark:text-purple-400 text-xl">📈</span>
+              <TrendingUpIcon className="text-purple-600 dark:text-purple-400" size={24} />
             </div>
           </div>
         </div>
@@ -319,8 +341,8 @@ export default function DashboardPage() {
             {analysisResult ? (
               <>
                 <div className="flex items-start space-x-3">
-                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mt-0.5">
-                    <span className="text-green-600 text-sm">✅</span>
+                  <div className="w-8 h-8 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mt-0.5">
+                    <CheckCircleIcon className="text-green-600 dark:text-green-400" size={16} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 dark:text-white">Analysis completed</p>
@@ -334,8 +356,8 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="flex items-start space-x-3">
-                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mt-0.5">
-                    <span className="text-blue-600 text-sm">🔍</span>
+                  <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mt-0.5">
+                    <SearchIcon className="text-blue-600 dark:text-blue-400" size={16} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 dark:text-white">Infrastructure scanned</p>
@@ -347,7 +369,7 @@ export default function DashboardPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-gray-400 dark:text-gray-500 text-xl">🚀</span>
+                  <RocketIcon className="text-gray-400 dark:text-gray-500" size={24} />
                 </div>
                 <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Ready to start</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Connect an account to begin analysis</p>
@@ -371,7 +393,7 @@ export default function DashboardPage() {
           onClick={() => setShowAddAccount(true)}
           className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
         >
-          <span className="mr-2">+</span>
+          <PlusIcon className="mr-2" size={16} />
           Add Account
         </button>
       </div>
@@ -422,7 +444,7 @@ export default function DashboardPage() {
                   </>
                 ) : (
                   <>
-                    <span className="mr-1">🔍</span>
+                    <SearchIcon className="mr-1" size={12} />
                     Analyze
                   </>
                 )}
@@ -441,7 +463,7 @@ export default function DashboardPage() {
         >
           <div className="text-center">
             <div className="w-12 h-12 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <span className="text-gray-500 dark:text-gray-400 text-xl">+</span>
+              <PlusIcon className="text-gray-500 dark:text-gray-400" size={24} />
             </div>
             <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Add Account</h4>
             <p className="text-sm text-gray-500 dark:text-gray-400">Connect a new AWS account to expand your optimization scope</p>
@@ -495,7 +517,7 @@ export default function DashboardPage() {
               </>
             ) : (
               <>
-                <span className="mr-2">🔍</span>
+                <SearchIcon className="mr-2" size={16} />
                 Run Analysis
               </>
             )}
@@ -525,7 +547,10 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="text-lg font-semibold text-gray-900">💾 EBS Volumes</h4>
+                <div className="flex items-center space-x-2">
+                  <HardDriveIcon className="text-gray-700" size={20} />
+                  <h4 className="text-lg font-semibold text-gray-900">EBS Volumes</h4>
+                </div>
                 <span className="text-2xl font-bold text-orange-600">{analysisResult.unattachedVolumes?.length || 0}</span>
               </div>
               <p className="text-sm text-gray-600 mb-2">Unattached volumes found</p>
@@ -536,7 +561,10 @@ export default function DashboardPage() {
 
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="text-lg font-semibold text-gray-900">🖥️ EC2 Instances</h4>
+                <div className="flex items-center space-x-2">
+                  <ServerIcon className="text-gray-700" size={20} />
+                  <h4 className="text-lg font-semibold text-gray-900">EC2 Instances</h4>
+                </div>
                 <span className="text-2xl font-bold text-blue-600">{analysisResult.ec2Recommendations?.length || 0}</span>
               </div>
               <p className="text-sm text-gray-600 mb-2">Rightsizing opportunities</p>
@@ -547,7 +575,10 @@ export default function DashboardPage() {
 
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="text-lg font-semibold text-gray-900">🌐 Elastic IPs</h4>
+                <div className="flex items-center space-x-2">
+                  <GlobeIcon className="text-gray-700" size={20} />
+                  <h4 className="text-lg font-semibold text-gray-900">Elastic IPs</h4>
+                </div>
                 <span className="text-2xl font-bold text-red-600">{analysisResult.unusedElasticIPs?.length || 0}</span>
               </div>
               <p className="text-sm text-gray-600 mb-2">Unused IP addresses</p>
@@ -560,7 +591,7 @@ export default function DashboardPage() {
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-gray-400 text-2xl">🔍</span>
+            <SearchIcon className="text-gray-400" size={32} />
           </div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Data</h3>
           <p className="text-gray-600 mb-6">Run an analysis on one of your connected accounts to see optimization opportunities</p>
@@ -569,7 +600,7 @@ export default function DashboardPage() {
               onClick={() => handleAnalyze(selectedAccount.id)}
               className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
-              <span className="mr-2">🔍</span>
+              <SearchIcon className="mr-2" size={16} />
               Analyze {selectedAccount.accountName}
             </button>
           )}
@@ -620,7 +651,7 @@ export default function DashboardPage() {
         <div className="px-6 py-8">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold">💎</span>
+              <span className="text-white font-bold text-lg">C</span>
             </div>
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">CostOptimizer</h1>
@@ -646,7 +677,7 @@ export default function DashboardPage() {
                 }`}
               >
                 <div className="flex items-center space-x-3">
-                  <span className="text-lg">{item.icon}</span>
+                  <item.icon className={currentView === item.id ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400'} size={20} />
                   <span className="font-medium">{item.label}</span>
                 </div>
                 {item.badge && (
@@ -674,7 +705,7 @@ export default function DashboardPage() {
               className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 p-1 transition-colors"
               title="Logout"
             >
-              <span className="text-lg">→</span>
+              <LogOutIcon size={18} />
             </button>
           </div>
           
@@ -700,7 +731,7 @@ export default function DashboardPage() {
                   className="w-80 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors duration-200"
                 />
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <span className="text-gray-400 dark:text-gray-500">🔍</span>
+                  <SearchIcon className="text-gray-400 dark:text-gray-500" size={18} />
                 </div>
               </div>
               <button
@@ -712,10 +743,10 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center space-x-4">
               <button className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200">
-                <span className="text-lg">🔔</span>
+                <BellIcon size={20} />
               </button>
               <button className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200">
-                <span className="text-lg">❓</span>
+                <HelpCircleIcon size={20} />
               </button>
             </div>
           </div>

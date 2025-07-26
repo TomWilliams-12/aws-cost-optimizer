@@ -1,4 +1,30 @@
 import React, { useEffect, useState } from 'react'
+import { CheckCircleIcon } from './Icons'
+
+// Additional toast-specific icons
+const XCircleIcon: React.FC<{ className?: string; size?: number }> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <circle cx="12" cy="12" r="10"/>
+    <line x1="15" y1="9" x2="9" y2="15"/>
+    <line x1="9" y1="9" x2="15" y2="15"/>
+  </svg>
+)
+
+const AlertTriangleIcon: React.FC<{ className?: string; size?: number }> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+    <line x1="12" y1="9" x2="12" y2="13"/>
+    <line x1="12" y1="17" x2="12.01" y2="17"/>
+  </svg>
+)
+
+const InfoIcon: React.FC<{ className?: string; size?: number }> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <circle cx="12" cy="12" r="10"/>
+    <line x1="12" y1="16" x2="12" y2="12"/>
+    <line x1="12" y1="8" x2="12.01" y2="8"/>
+  </svg>
+)
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info'
 
@@ -50,7 +76,7 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
         return {
           bg: 'bg-green-50 dark:bg-green-900/20',
           border: 'border-green-200 dark:border-green-700',
-          icon: '✅',
+          icon: CheckCircleIcon,
           iconBg: 'bg-green-100 dark:bg-green-800/30',
           iconColor: 'text-green-600 dark:text-green-400',
           title: 'text-green-800 dark:text-green-300',
@@ -60,7 +86,7 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
         return {
           bg: 'bg-red-50 dark:bg-red-900/20',
           border: 'border-red-200 dark:border-red-700',
-          icon: '❌',
+          icon: XCircleIcon,
           iconBg: 'bg-red-100 dark:bg-red-800/30',
           iconColor: 'text-red-600 dark:text-red-400',
           title: 'text-red-800 dark:text-red-300',
@@ -70,7 +96,7 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
         return {
           bg: 'bg-yellow-50 dark:bg-yellow-900/20',
           border: 'border-yellow-200 dark:border-yellow-700',
-          icon: '⚠️',
+          icon: AlertTriangleIcon,
           iconBg: 'bg-yellow-100 dark:bg-yellow-800/30',
           iconColor: 'text-yellow-600 dark:text-yellow-400',
           title: 'text-yellow-800 dark:text-yellow-300',
@@ -80,7 +106,7 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
         return {
           bg: 'bg-blue-50 dark:bg-blue-900/20',
           border: 'border-blue-200 dark:border-blue-700',
-          icon: 'ℹ️',
+          icon: InfoIcon,
           iconBg: 'bg-blue-100 dark:bg-blue-800/30',
           iconColor: 'text-blue-600 dark:text-blue-400',
           title: 'text-blue-800 dark:text-blue-300',
@@ -101,7 +127,7 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
     >
       <div className="flex items-start">
         <div className={`${styles.iconBg} rounded-full p-1 mr-3 flex-shrink-0`}>
-          <span className="text-sm">{styles.icon}</span>
+          <styles.icon className={styles.iconColor} size={16} />
         </div>
         <div className="flex-1 min-w-0">
           <h4 className={`text-sm font-medium ${styles.title} mb-1`}>

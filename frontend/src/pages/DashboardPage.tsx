@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { Account } from '../types'
-import { AccountOnboardingWizard } from '../components/AccountOnboardingWizard'
+import { CloudFormationOnboarding } from '../components/CloudFormationOnboarding'
 import { CostBreakdownChart } from '../components/CostBreakdownChart'
 import { SavingsImpactChart } from '../components/SavingsImpactChart'
 
@@ -566,8 +566,8 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Account Onboarding Wizard */}
-          <AccountOnboardingWizard
+          {/* CloudFormation Onboarding */}
+          <CloudFormationOnboarding
             isOpen={showAddAccount}
             onClose={() => setShowAddAccount(false)}
             onSubmit={handleAddAccount}

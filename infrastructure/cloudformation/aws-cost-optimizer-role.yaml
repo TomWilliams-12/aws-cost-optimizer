@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cost Optimizer - IAM Role Setup for secure cost analysis'
+
+Parameters:
+  CostOptimizerAccountId:
+    Type: String
+    Default: '504264909935'
+    Description: 'AWS Account ID of the Cost Optimizer service (do not change)'
+    AllowedPattern: '[0-9]{12}'
+    ConstraintDescription: 'Must be a valid 12-digit AWS Account ID'
+  
+  ExternalId:
+    Type: String
+    Description: 'Unique external ID for secure role assumption (automatically generated)'
+    MinLength: 10
+    MaxLength: 128
+    AllowedPattern: '[a-zA-Z0-9\-_]+'
+    ConstraintDescription: 'Must contain only letters, numbers, hyphens, and underscores'
+  
+  RoleName:
+    Type: String
+    Default: 'AWSCostOptimizerRole'
+    Description: 'Name for the IAM role'
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9+=,.@\-_]+'
+    ConstraintDescription: 'Must be a valid IAM role name'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Cost Optimizer Configuration"
+        Parameters:
+          - ExternalId
+          - RoleName
+      - Label:
+          default: "Service Configuration (Do Not Modify)"
+        Parameters:
+          - CostOptimizerAccountId
+    ParameterLabels:
+      ExternalId:
+        default: "External ID"
+      RoleName:
+        default: "IAM Role Name"
+      CostOptimizerAccountId:
+        default: "Cost Optimizer Account ID"
+
+Resources:
+  CostOptimizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: 'Role for AWS Cost Optimizer to analyze and optimize costs'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${CostOptimizerAccountId}:root'
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref ExternalId
+              IpAddress:
+                'aws:SourceIp':
+                  - '0.0.0.0/0'  # AWS Lambda IP ranges - consider restricting further
+            
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/ReadOnlyAccess'
+        - 'arn:aws:iam::aws:policy/job-function/Billing'
+      
+      Tags:
+        - Key: 'Service'
+          Value: 'AWS Cost Optimizer'
+        - Key: 'Purpose'
+          Value: 'Cost analysis and optimization'
+        - Key: 'CreatedBy'
+          Value: 'CloudFormation'
+        - Key: 'ExternalId'
+          Value: !Ref ExternalId
+
+  # Custom policy for additional permissions needed for cost optimization
+  CostOptimizerPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: 'AWSCostOptimizerPolicy'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # CloudWatch metrics access for rightsizing analysis
+          - Effect: Allow
+            Action:
+              - 'cloudwatch:GetMetricStatistics'
+              - 'cloudwatch:GetMetricData'
+              - 'cloudwatch:ListMetrics'
+              - 'cloudwatch:DescribeAlarms'
+            Resource: '*'
+          
+          # Enhanced EBS and EC2 analysis
+          - Effect: Allow
+            Action:
+              - 'ec2:DescribeInstances'
+              - 'ec2:DescribeInstanceTypes'
+              - 'ec2:DescribeImages'
+              - 'ec2:DescribeVolumes'
+              - 'ec2:DescribeSnapshots'
+              - 'ec2:DescribeAddresses'
+              - 'ec2:DescribeNetworkInterfaces'
+              - 'ec2:DescribeSecurityGroups'
+              - 'ec2:DescribeVpcs'
+              - 'ec2:DescribeSubnets'
+              - 'ec2:DescribeAvailabilityZones'
+              - 'ec2:DescribeRegions'
+            Resource: '*'
+          
+          # Load Balancer analysis
+          - Effect: Allow
+            Action:
+              - 'elasticloadbalancing:DescribeLoadBalancers'
+              - 'elasticloadbalancing:DescribeTargetGroups'
+              - 'elasticloadbalancing:DescribeTargetHealth'
+              - 'elasticloadbalancing:DescribeListeners'
+              - 'elasticloadbalancing:DescribeRules'
+              - 'elasticloadbalancing:DescribeTags'
+            Resource: '*'
+          
+          # S3 storage analysis
+          - Effect: Allow
+            Action:
+              - 's3:ListAllMyBuckets'
+              - 's3:GetBucketLocation'
+              - 's3:GetBucketVersioning'
+              - 's3:GetBucketLifecycleConfiguration'
+              - 's3:GetBucketPolicy'
+              - 's3:GetBucketTagging'
+              - 's3:GetBucketRequestPayment'
+              - 's3:GetBucketLogging'
+              - 's3:GetBucketNotification'
+              - 's3:GetBucketInventoryConfiguration'
+              - 's3:GetBucketMetricsConfiguration'
+              - 's3:ListBucketMultipartUploads'
+              - 's3:ListBucket'
+            Resource: '*'
+          
+          # Cost and billing data access
+          - Effect: Allow
+            Action:
+              - 'ce:GetCostAndUsage'
+              - 'ce:GetUsageReport'
+              - 'ce:GetReservationCoverage'
+              - 'ce:GetReservationPurchaseRecommendation'
+              - 'ce:GetReservationUtilization'
+              - 'ce:GetSavingsPlansUtilization'
+              - 'ce:ListCostCategoryDefinitions'
+              - 'ce:GetRightsizingRecommendation'
+              - 'pricing:GetProducts'
+              - 'pricing:GetAttributeValues'
+              - 'support:DescribeTrustedAdvisorChecks'
+              - 'support:DescribeTrustedAdvisorCheckResult'
+            Resource: '*'
+          
+          # Organization support (for future enterprise features)
+          - Effect: Allow
+            Action:
+              - 'organizations:DescribeOrganization'
+              - 'organizations:DescribeAccount'
+              - 'organizations:ListAccounts'
+              - 'organizations:ListAccountsForParent'
+            Resource: '*'
+            
+      Roles:
+        - !Ref CostOptimizerRole
+
+Outputs:
+  RoleArn:
+    Description: 'ARN of the created IAM role for AWS Cost Optimizer'
+    Value: !GetAtt CostOptimizerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleArn'
+  
+  RoleName:
+    Description: 'Name of the created IAM role'
+    Value: !Ref CostOptimizerRole
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleName'
+  
+  ExternalId:
+    Description: 'External ID used for secure role assumption'
+    Value: !Ref ExternalId
+    Export:
+      Name: !Sub '${AWS::StackName}-ExternalId'
+  
+  AccountId:
+    Description: 'AWS Account ID where the role was created'
+    Value: !Ref 'AWS::AccountId'
+    Export:
+      Name: !Sub '${AWS::StackName}-AccountId'
+  
+  SetupInstructions:
+    Description: 'Next steps after role creation'
+    Value: !Sub |
+      Role successfully created! 
+      
+      Next steps:
+      1. Copy the Role ARN: ${CostOptimizerRole.Arn}
+      2. Copy the External ID: ${ExternalId}
+      3. Return to AWS Cost Optimizer and paste these values
+      4. Click "Test Connection" to verify setup
+      5. Start your first cost analysis!
+      
+      Questions? Contact support@awscostoptimizer.com
+
+  QuickCopyInfo:
+    Description: 'Quick copy information for setup'
+    Value: !Sub |
+      Role ARN: ${CostOptimizerRole.Arn}
+      External ID: ${ExternalId}
+      Account ID: ${AWS::AccountId}

@@ -577,6 +577,14 @@ async function analyzeS3Storage(s3Client: S3Client, region: string): Promise<S3B
     for (const bucket of Buckets || []) {
       if (!bucket.Name) continue
       
+      // Skip Cost Optimizer's own infrastructure buckets
+      if (bucket.Name.includes('aws-cost-optimizer') || 
+          bucket.Name.includes('cost-optimizer') ||
+          bucket.Name.includes('cloudformation-templates')) {
+        console.log(`Skipping infrastructure bucket: ${bucket.Name}`)
+        continue
+      }
+      
       try {
         console.log(`Analyzing S3 bucket: ${bucket.Name}`)
         
@@ -785,18 +793,40 @@ async function analyzeUnusedElasticIPs(ec2Client: EC2Client): Promise<UnusedElas
     console.log(`Found ${Addresses?.length || 0} Elastic IP addresses`)
     
     for (const address of Addresses || []) {
-      // Check if the Elastic IP is not associated with any instance
-      if (!address.InstanceId && !address.NetworkInterfaceId) {
+      console.log(`Analyzing Elastic IP: ${address.PublicIp}`, {
+        AllocationId: address.AllocationId,
+        InstanceId: address.InstanceId,
+        NetworkInterfaceId: address.NetworkInterfaceId,
+        AssociationId: address.AssociationId,
+        Domain: address.Domain,
+        PrivateIpAddress: address.PrivateIpAddress
+      })
+      
+      // An Elastic IP is considered unused if:
+      // 1. Not associated with an EC2 instance (InstanceId is null/undefined)
+      // 2. Not associated with a network interface (NetworkInterfaceId is null/undefined)
+      // 3. No association ID (AssociationId is null/undefined)
+      const isUnused = !address.InstanceId && 
+                      !address.NetworkInterfaceId && 
+                      !address.AssociationId
+      
+      if (isUnused) {
+        console.log(`Found unused Elastic IP: ${address.PublicIp}`)
         unusedIPs.push({
           allocationId: address.AllocationId || '',
           publicIp: address.PublicIp || '',
-          associatedInstanceId: undefined,
           monthlyCost: 3.65 // $0.005 per hour * 24 hours * 30.44 days = $3.65/month
+        })
+      } else {
+        console.log(`Elastic IP ${address.PublicIp} is in use:`, {
+          hasInstance: !!address.InstanceId,
+          hasNetworkInterface: !!address.NetworkInterfaceId,
+          hasAssociation: !!address.AssociationId
         })
       }
     }
     
-    console.log(`Found ${unusedIPs.length} unused Elastic IP addresses`)
+    console.log(`Found ${unusedIPs.length} unused Elastic IP addresses out of ${Addresses?.length || 0} total IPs`)
     
   } catch (error) {
     console.error('Error analyzing Elastic IPs:', error)
@@ -834,7 +864,7 @@ async function analyzeLoadBalancers(
         
         // Get target groups for this load balancer
         const { TargetGroups } = await elbv2Client.send(new DescribeTargetGroupsCommand({
-          LoadBalancerArns: [lb.LoadBalancerArn]
+          LoadBalancerArn: lb.LoadBalancerArn
         }))
         
         const targetGroupsAnalysis = []
@@ -846,8 +876,8 @@ async function analyzeLoadBalancers(
             TargetGroupArn: tg.TargetGroupArn
           }))
           
-          const healthyTargets = TargetHealthDescriptions?.filter(t => t.TargetHealth?.State === 'healthy').length || 0
-          const unhealthyTargets = TargetHealthDescriptions?.filter(t => t.TargetHealth?.State === 'unhealthy').length || 0
+          const healthyTargets = TargetHealthDescriptions?.filter((t: any) => t.TargetHealth?.State === 'healthy').length || 0
+          const unhealthyTargets = TargetHealthDescriptions?.filter((t: any) => t.TargetHealth?.State === 'unhealthy').length || 0
           const totalTargets = TargetHealthDescriptions?.length || 0
           
           targetGroupsAnalysis.push({
@@ -1299,6 +1329,25 @@ export const handler = async (
       loadBalancerAnalysis,
     }
 
+    // Remove undefined values to prevent DynamoDB errors
+    function removeUndefinedValues(obj: any): any {
+      if (Array.isArray(obj)) {
+        return obj.map(item => removeUndefinedValues(item)).filter(item => item !== undefined)
+      } else if (obj !== null && typeof obj === 'object') {
+        const cleaned: any = {}
+        Object.keys(obj).forEach(key => {
+          const value = removeUndefinedValues(obj[key])
+          if (value !== undefined) {
+            cleaned[key] = value
+          }
+        })
+        return cleaned
+      }
+      return obj
+    }
+
+    const cleanedAnalysisResult = removeUndefinedValues(analysisResult)
+
     const analysisFinishTime = new Date().toISOString();
     await dynamo.send(new UpdateCommand({
         TableName: ANALYSES_TABLE,
@@ -1311,7 +1360,7 @@ export const handler = async (
         },
         ExpressionAttributeValues: {
             ':status': 'completed',
-            ':result': analysisResult,
+            ':result': cleanedAnalysisResult,
             ':updatedAt': analysisFinishTime,
         },
     }));

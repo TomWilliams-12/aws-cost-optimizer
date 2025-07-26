@@ -11,6 +11,9 @@ locals {
     "GET /reports/{id}"  = "reports"
     "POST /subscriptions" = "stripe"
     "POST /webhooks/stripe" = "stripe"
+    "POST /organizations/detect" = "organizations"
+    "POST /organizations/deploy" = "organizations"
+    "GET /organizations/{organizationId}/status" = "organizations"
   }
 }
 

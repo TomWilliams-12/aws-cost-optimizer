@@ -8,9 +8,12 @@ locals {
     ACCOUNTS_TABLE  = aws_dynamodb_table.main["accounts"].name
     ANALYSES_TABLE  = aws_dynamodb_table.main["analyses"].name
     REPORTS_TABLE   = aws_dynamodb_table.main["reports"].name
+    ORGANIZATIONS_TABLE = aws_dynamodb_table.main["organizations"].name
+    ORG_ACCOUNTS_TABLE = aws_dynamodb_table.main["organization_accounts"].name
     REPORTS_BUCKET  = aws_s3_bucket.reports.id
     APP_SECRETS_ARN = aws_secretsmanager_secret.app_secrets.arn
     JWT_SECRET_NAME = aws_secretsmanager_secret.app_secrets.name
+    TRUSTED_ACCOUNT_ID = var.trusted_account_id
   }
 
   # Lambda function configurations
@@ -39,6 +42,11 @@ locals {
       handler     = "handlers/stripe.handler"
       timeout     = 30
       memory_size = 256
+    }
+    organizations = {
+      handler     = "handlers/organizations.handler"
+      timeout     = 300
+      memory_size = 512
     }
   }
 }
@@ -97,10 +105,14 @@ resource "aws_iam_role_policy" "lambda_dynamodb_policy" {
           aws_dynamodb_table.main["accounts"].arn,
           aws_dynamodb_table.main["analyses"].arn,
           aws_dynamodb_table.main["reports"].arn,
+          aws_dynamodb_table.main["organizations"].arn,
+          aws_dynamodb_table.main["organization_accounts"].arn,
           "${aws_dynamodb_table.main["users"].arn}/index/*",
           "${aws_dynamodb_table.main["accounts"].arn}/index/*",
           "${aws_dynamodb_table.main["analyses"].arn}/index/*",
-          "${aws_dynamodb_table.main["reports"].arn}/index/*"
+          "${aws_dynamodb_table.main["reports"].arn}/index/*",
+          "${aws_dynamodb_table.main["organizations"].arn}/index/*",
+          "${aws_dynamodb_table.main["organization_accounts"].arn}/index/*"
         ]
       }
     ]
@@ -178,7 +190,18 @@ resource "aws_iam_role_policy" "lambda_aws_analysis_policy" {
           "ce:GetReservationPurchaseRecommendation",
           "support:*",
           "sts:AssumeRole",
-          "sts:GetCallerIdentity"
+          "sts:GetCallerIdentity",
+          "organizations:DescribeOrganization",
+          "organizations:ListAccounts",
+          "organizations:ListOrganizationalUnitsForParent",
+          "organizations:ListRoots",
+          "cloudformation:CreateStackSet",
+          "cloudformation:DescribeStackSet",
+          "cloudformation:CreateStackInstances",
+          "cloudformation:ListStackInstances",
+          "cloudformation:UpdateStackSet",
+          "cloudformation:DeleteStackInstances",
+          "cloudformation:DeleteStackSet"
         ]
         Resource = "*"
       },

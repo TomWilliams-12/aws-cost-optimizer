@@ -6,12 +6,15 @@
 
 ### Key Features
 - ✅ **One-click CloudFormation onboarding** - Frictionless IAM role setup
+- ✅ **AWS Organizations integration** - Enterprise-scale multi-account deployment
 - ✅ **Comprehensive cost analysis** - EC2, S3, EBS, Elastic IPs, Load Balancers
 - ✅ **Analysis result persistence** - No data loss on page reload
 - ✅ **Enterprise-grade UI** - Sophisticated multi-panel architecture with dark mode
 - ✅ **Professional design system** - SVG icon library with consistent theming
 - ✅ **CloudWatch integration** - 90-day historical metrics analysis
 - ✅ **Security-first architecture** - Cross-account roles with external ID
+- ✅ **Professional landing page** - ROI-focused marketing with trust indicators
+- ✅ **Complete security documentation** - Privacy policy, terms, security pages
 
 ## Architecture
 
@@ -35,12 +38,12 @@
 ```
 /infrastructure/terraform/
 ├── main.tf              # Provider and general config
-├── api_gateway.tf       # HTTP API Gateway v2 routes
-├── lambda.tf           # Lambda functions and permissions
-├── dynamodb.tf         # User accounts and analysis tables
+├── api_gateway.tf       # HTTP API Gateway v2 routes (includes organizations endpoints)
+├── lambda.tf           # Lambda functions and permissions (with Organizations support)
+├── dynamodb.tf         # User accounts, analysis tables, and organizations tables
 ├── s3.tf              # Frontend hosting and file storage
 ├── secrets.tf         # JWT secrets management
-└── cloudformation_hosting.tf # Public CloudFormation templates
+└── cloudformation_hosting.tf # Public CloudFormation templates (individual + organization)
 ```
 
 ## Key Components

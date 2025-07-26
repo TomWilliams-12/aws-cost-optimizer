@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cost Optimizer Organization Management Role - Allows detection and StackSet deployment'
+
+Parameters:
+  ExternalId:
+    Type: String
+    Description: 'External ID for cross-account role access'
+    MinLength: 6
+    MaxLength: 128
+    Default: 'cost-optimizer-org-2025'
+  
+  TrustedAccountId:
+    Type: String
+    Description: 'AWS Account ID of the Cost Optimizer service'
+    Default: '504264909935'
+    AllowedPattern: '[0-9]{12}'
+
+Resources:
+  OrganizationCostOptimizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'OrganizationCostOptimizerRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${TrustedAccountId}:root'
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref ExternalId
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/ReadOnlyAccess'
+      Policies:
+        - PolicyName: 'OrganizationManagement'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # AWS Organizations permissions for detection
+              - Effect: Allow
+                Action:
+                  - 'organizations:DescribeOrganization'
+                  - 'organizations:ListAccounts'
+                  - 'organizations:ListOrganizationalUnitsForParent'
+                  - 'organizations:ListRoots'
+                  - 'organizations:ListChildren'
+                  - 'organizations:DescribeOrganizationalUnit'
+                  - 'organizations:DescribeAccount'
+                Resource: '*'
+              
+              # CloudFormation StackSet permissions for deployment
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:CreateStackSet'
+                  - 'cloudformation:UpdateStackSet'
+                  - 'cloudformation:DeleteStackSet'
+                  - 'cloudformation:DescribeStackSet'
+                  - 'cloudformation:ListStackSets'
+                  - 'cloudformation:CreateStackInstances'
+                  - 'cloudformation:UpdateStackInstances'
+                  - 'cloudformation:DeleteStackInstances'
+                  - 'cloudformation:ListStackInstances'
+                  - 'cloudformation:DescribeStackSetOperation'
+                  - 'cloudformation:ListStackSetOperations'
+                  - 'cloudformation:StopStackSetOperation'
+                Resource: '*'
+              
+              # IAM permissions needed for StackSet service role
+              - Effect: Allow
+                Action:
+                  - 'iam:CreateRole'
+                  - 'iam:DeleteRole'
+                  - 'iam:GetRole'
+                  - 'iam:PassRole'
+                  - 'iam:CreateServiceLinkedRole'
+                Resource: 
+                  - 'arn:aws:iam::*:role/service-role/AWSCloudFormationStackSetAdministrationRole'
+                  - 'arn:aws:iam::*:role/service-role/AWSCloudFormationStackSetExecutionRole'
+      Tags:
+        - Key: 'Purpose'
+          Value: 'AWS Cost Optimizer Organization Access'
+        - Key: 'Service'
+          Value: 'CostOptimizer'
+
+Outputs:
+  RoleArn:
+    Description: 'ARN of the created IAM role'
+    Value: !GetAtt OrganizationCostOptimizerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleArn'
+  
+  ExternalId:
+    Description: 'External ID for assuming the role'
+    Value: !Ref ExternalId
+    Export:
+      Name: !Sub '${AWS::StackName}-ExternalId'
+  
+  SetupInstructions:
+    Description: 'Next steps for AWS Cost Optimizer setup'
+    Value: !Sub |
+      1. Copy the Role ARN: ${OrganizationCostOptimizerRole.Arn}
+      2. Copy the External ID: ${ExternalId}
+      3. Return to AWS Cost Optimizer and paste these values
+      4. Continue with organization detection

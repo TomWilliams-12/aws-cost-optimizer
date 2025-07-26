@@ -96,6 +96,67 @@ locals {
       ]
       ttl_enabled = true
     }
+
+    organizations = {
+      hash_key = "id"
+      attributes = [
+        {
+          name = "id"
+          type = "S"
+        },
+        {
+          name = "organizationId"
+          type = "S"
+        },
+        {
+          name = "userId"
+          type = "S"
+        }
+      ]
+      global_secondary_indexes = [
+        {
+          name            = "OrganizationIndex"
+          hash_key        = "organizationId"
+          range_key       = null
+          projection_type = "ALL"
+        },
+        {
+          name            = "UserOrganizationsIndex"
+          hash_key        = "userId"
+          range_key       = null
+          projection_type = "ALL"
+        }
+      ]
+      ttl_enabled = false
+    }
+
+    organization_accounts = {
+      hash_key = "organizationId"
+      range_key = "accountId"
+      attributes = [
+        {
+          name = "organizationId"
+          type = "S"
+        },
+        {
+          name = "accountId"
+          type = "S"
+        },
+        {
+          name = "userId"
+          type = "S"
+        }
+      ]
+      global_secondary_indexes = [
+        {
+          name            = "UserOrgAccountsIndex"
+          hash_key        = "userId"
+          range_key       = null
+          projection_type = "ALL"
+        }
+      ]
+      ttl_enabled = false
+    }
   }
 }
 
@@ -106,6 +167,7 @@ resource "aws_dynamodb_table" "main" {
   name         = "${local.name_prefix}-${each.key}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = each.value.hash_key
+  range_key    = lookup(each.value, "range_key", null)
 
   dynamic "attribute" {
     for_each = each.value.attributes

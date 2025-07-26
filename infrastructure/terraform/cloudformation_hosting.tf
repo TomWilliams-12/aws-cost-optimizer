@@ -67,6 +67,23 @@ resource "aws_s3_object" "iam_role_template" {
   }
 }
 
+# Upload the Organization CloudFormation template
+resource "aws_s3_object" "org_role_template" {
+  bucket = aws_s3_bucket.cloudformation_templates.id
+  key    = "v1/aws-cost-optimizer-organization-role.yaml"
+  source = "${path.module}/../cloudformation/aws-cost-optimizer-organization-role.yaml"
+  etag   = filemd5("${path.module}/../cloudformation/aws-cost-optimizer-organization-role.yaml")
+
+  content_type = "text/yaml"
+  
+  tags = {
+    Public      = "true"  # This tag allows public access via bucket policy
+    Version     = "1.0"
+    Environment = var.stage
+    Type        = "Organization"
+  }
+}
+
 # Create a JSON metadata file for versioning
 resource "aws_s3_object" "template_metadata" {
   bucket = aws_s3_bucket.cloudformation_templates.id
@@ -103,6 +120,33 @@ resource "aws_s3_object" "template_metadata" {
           }
         }
       }
+      "aws-cost-optimizer-organization-role" = {
+        latest_version = "v1"
+        versions = {
+          "v1" = {
+            file = "v1/aws-cost-optimizer-organization-role.yaml"
+            description = "Organization management role with StackSet deployment permissions"
+            created_date = "2025-07-26"
+            parameters = {
+              ExternalId = {
+                type = "String"
+                description = "Unique external ID for secure role assumption"
+                required = true
+              }
+              TrustedAccountId = {
+                type = "String"
+                description = "AWS Account ID of the Cost Optimizer service"
+                required = true
+              }
+            }
+            outputs = [
+              "RoleArn",
+              "ExternalId",
+              "SetupInstructions"
+            ]
+          }
+        }
+      }
     }
     last_updated = "2025-07-26T20:00:00Z"
   })
@@ -113,5 +157,15 @@ resource "aws_s3_object" "template_metadata" {
     Public      = "true"
     Version     = "1.0"
     Environment = var.stage
+  }
+}
+
+# Outputs for CloudFormation template URLs
+output "cloudformation_template_urls" {
+  description = "URLs for CloudFormation templates"
+  value = {
+    individual_account = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-role.yaml"
+    organization       = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-organization-role.yaml"
+    bucket_name       = aws_s3_bucket.cloudformation_templates.id
   }
 }

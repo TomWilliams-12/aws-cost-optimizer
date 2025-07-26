@@ -78,6 +78,7 @@ interface AccountRecord {
   lastAnalyzed?: string
   createdAt: string
   updatedAt: string
+  isOrganization?: boolean
 }
 
 export const list = async (
@@ -141,14 +142,23 @@ export const add = async (
       return createErrorResponse(401, 'Unauthorized');
     }
 
-    const { accountName, accountId, region, roleArn, externalId } = JSON.parse(event.body || '{}')
+    const { accountName, accountId, region, roleArn, externalId, isOrganization } = JSON.parse(event.body || '{}')
+
+    // For organizations, extract account ID from role ARN
+    let effectiveAccountId = accountId
+    if (isOrganization && !accountId) {
+      const arnMatch = roleArn.match(/arn:aws:iam::(\d{12}):role\//)
+      if (arnMatch) {
+        effectiveAccountId = arnMatch[1]
+      }
+    }
 
     // Validate input
-    if (!accountName || !accountId || !region || !roleArn) {
+    if (!accountName || !effectiveAccountId || !region || !roleArn) {
       return createErrorResponse(400, 'Account name, AWS account ID, region, and role ARN are required')
     }
 
-    if (!validateAwsAccountId(accountId)) {
+    if (!validateAwsAccountId(effectiveAccountId)) {
       return createErrorResponse(400, 'AWS Account ID must be exactly 12 digits (e.g., 123456789012)')
     }
 
@@ -192,11 +202,12 @@ export const add = async (
 
     // Test AWS credentials by assuming the role
     try {
-      const effectiveExternalId = externalId || `cost-saver-${accountId}`;
+      const effectiveExternalId = externalId || `cost-saver-${effectiveAccountId}`;
       console.log('Attempting to assume role:', {
         roleArn,
         externalId: effectiveExternalId,
-        accountId
+        accountId: effectiveAccountId,
+        isOrganization
       });
       
       const assumeRoleCommand = new AssumeRoleCommand({
@@ -220,7 +231,7 @@ export const add = async (
 
       const identity = await tempStsClient.send(new GetCallerIdentityCommand({}))
       
-      if (identity.Account !== accountId) {
+      if (identity.Account !== effectiveAccountId) {
         return createErrorResponse(400, 'Role ARN does not belong to the specified AWS account. Please verify both the Role ARN and AWS Account ID are correct.')
       }
     } catch (error: any) {
@@ -249,13 +260,14 @@ export const add = async (
       accountId: accountRecordId,
       userId: user.userId,
       accountName: sanitizeInput(accountName, 100),
-      awsAccountId: accountId,
+      awsAccountId: effectiveAccountId,
       region,
       roleArn,
       externalId: externalId || undefined,
       status: 'active',
       createdAt: now,
       updatedAt: now,
+      isOrganization: isOrganization || undefined,
     }
 
     // Save account to database

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Account } from '../types'
 import { CloudFormationOnboarding } from '../components/CloudFormationOnboarding'
@@ -30,7 +31,11 @@ import {
   HardDriveIcon,
   ServerIcon,
   GlobeIcon,
-  LogOutIcon
+  CloudIcon,
+  LogOutIcon,
+  ShieldCheckIcon,
+  DocumentCheckIcon,
+  ClipboardDocumentCheckIcon
 } from '../components/Icons'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
@@ -53,6 +58,7 @@ interface NavigationItem {
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<EnhancedError | null>(null)
@@ -389,13 +395,22 @@ export default function DashboardPage() {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">AWS Accounts</h2>
           <p className="text-gray-600 dark:text-gray-400">Manage your connected cloud infrastructure</p>
         </div>
-        <button
-          onClick={() => setShowAddAccount(true)}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <PlusIcon className="mr-2" size={16} />
-          Add Account
-        </button>
+        <div className="flex space-x-3">
+          <button
+            onClick={() => navigate('/organization-onboarding')}
+            className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-medium rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-200"
+          >
+            <CloudIcon className="mr-2" size={16} />
+            Add Organization
+          </button>
+          <button
+            onClick={() => setShowAddAccount(true)}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <PlusIcon className="mr-2" size={16} />
+            Add Account
+          </button>
+        </div>
       </div>
 
       {/* Accounts Grid */}
@@ -455,6 +470,24 @@ export default function DashboardPage() {
             </div>
           </div>
         ))}
+
+        {/* Add Organization Card */}
+        <div
+          onClick={() => navigate('/organization-onboarding')}
+          className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border-2 border-dashed border-purple-300 dark:border-purple-600 rounded-xl p-6 cursor-pointer hover:border-purple-400 dark:hover:border-purple-500 hover:from-purple-100 hover:to-blue-100 dark:hover:from-purple-900/30 dark:hover:to-blue-900/30 transition-all duration-200"
+        >
+          <div className="text-center">
+            <div className="w-12 h-12 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <CloudIcon className="text-white" size={24} />
+            </div>
+            <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Add Organization</h4>
+            <p className="text-sm text-purple-600 dark:text-purple-400 font-medium mb-1">Enterprise-Scale Onboarding</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Deploy across multiple AWS accounts in your organization</p>
+            <div className="mt-3 px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 text-xs rounded-full">
+              Preview Feature
+            </div>
+          </div>
+        </div>
 
         {/* Add Account Card */}
         <div
@@ -709,6 +742,37 @@ export default function DashboardPage() {
             </button>
           </div>
           
+          {/* Quick Links */}
+          <div className="space-y-1 mb-4">
+            <a
+              href="/security"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center space-x-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              <ShieldCheckIcon size={16} />
+              <span>Security & Permissions</span>
+            </a>
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center space-x-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              <DocumentCheckIcon size={16} />
+              <span>Privacy Policy</span>
+            </a>
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center space-x-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              <ClipboardDocumentCheckIcon size={16} />
+              <span>Terms of Service</span>
+            </a>
+          </div>
+          
           {/* Theme Toggle */}
           <div className="flex justify-center">
             <CompactThemeToggle />
@@ -742,6 +806,15 @@ export default function DashboardPage() {
               </button>
             </div>
             <div className="flex items-center space-x-4">
+              <a
+                href="/security"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
+                title="Security & Permissions"
+              >
+                <ShieldCheckIcon size={20} />
+              </a>
               <button className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200">
                 <BellIcon size={20} />
               </button>

@@ -30,6 +30,12 @@ variable "project_name" {
   default     = "aws-cost-optimizer"
 }
 
+variable "trusted_account_id" {
+  description = "AWS account ID that can assume cross-account roles"
+  type        = string
+  default     = "123456789012" # Replace with actual account ID
+}
+
 locals {
   name_prefix = "${var.project_name}-${var.stage}"
 } 

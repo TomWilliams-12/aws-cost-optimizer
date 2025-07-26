@@ -4,11 +4,12 @@ import { Account } from '../types'
 import { CloudFormationOnboarding } from '../components/CloudFormationOnboarding'
 import { CostBreakdownChart } from '../components/CostBreakdownChart'
 import { SavingsImpactChart } from '../components/SavingsImpactChart'
-import { SkeletonMetricsCard, SkeletonAccountCard, SkeletonText, SkeletonChart } from '../components/Skeleton'
+import { SkeletonChart } from '../components/Skeleton'
 import { ErrorDisplay } from '../components/ErrorDisplay'
 import { parseApiError, EnhancedError } from '../utils/errorHandling'
 import { ApiClient } from '../utils/retryLogic'
 import { ToastContainer, useToast } from '../components/Toast'
+import { CompactThemeToggle } from '../components/ThemeToggle'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
 
@@ -16,8 +17,18 @@ const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
 const apiClient = new ApiClient(API_URL, {}, {
   maxAttempts: 3,
   delay: 1000,
-  backoffMultiplier: 1.5 // Gentler backoff for UX
+  backoffMultiplier: 1.5
 })
+
+type ViewMode = 'overview' | 'accounts' | 'analysis' | 'recommendations' | 'reports' | 'settings'
+
+interface NavigationItem {
+  id: ViewMode
+  label: string
+  icon: string
+  badge?: number
+  disabled?: boolean
+}
 
 export default function DashboardPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -25,13 +36,41 @@ export default function DashboardPage() {
   const [error, setError] = useState<EnhancedError | null>(null)
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [isAddingAccount, setIsAddingAccount] = useState(false)
-  const [showAnalysisResult, setShowAnalysisResult] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<any>(null)
   const [analyzingAccountId, setAnalyzingAccountId] = useState<string | null>(null)
   const [analysisFromCache, setAnalysisFromCache] = useState(false)
   const [analysisDate, setAnalysisDate] = useState<string | null>(null)
+  const [currentView, setCurrentView] = useState<ViewMode>('overview')
+  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const { user, token, logout } = useAuth()
   const { toasts, removeToast, success, error: showError, info } = useToast()
+
+  // Calculate summary metrics
+  const totalMonthlySavings = analysisResult ? (
+    (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
+    (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
+    (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
+    (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
+    (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
+  ) : 0
+
+  const totalRecommendations = analysisResult ? (
+    (analysisResult.ec2Recommendations?.length || 0) +
+    (analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
+    (analysisResult.unusedElasticIPs?.length || 0) +
+    (analysisResult.unattachedVolumes?.length || 0) +
+    (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)
+  ) : 0
+
+  const navigationItems: NavigationItem[] = [
+    { id: 'overview', label: 'Overview', icon: '📊' },
+    { id: 'accounts', label: 'AWS Accounts', icon: '🔗', badge: accounts.length },
+    { id: 'analysis', label: 'Cost Analysis', icon: '🔍', badge: totalRecommendations || undefined },
+    { id: 'recommendations', label: 'Recommendations', icon: '💡', badge: totalRecommendations || undefined },
+    { id: 'reports', label: 'Reports', icon: '📋', disabled: true },
+    { id: 'settings', label: 'Settings', icon: '⚙️' }
+  ]
 
   // Function to fetch latest analysis for an account
   const fetchLatestAnalysis = async (accountId: string) => {
@@ -56,7 +95,6 @@ export default function DashboardPage() {
         return
       }
 
-      // Update API client with current token
       apiClient.setAuthToken(token)
 
       try {
@@ -65,9 +103,9 @@ export default function DashboardPage() {
         const fetchedAccounts = data.data?.accounts || []
         setAccounts(fetchedAccounts)
         
-        // Try to fetch latest analysis for the first connected account
         if (fetchedAccounts.length > 0) {
           const firstAccount = fetchedAccounts[0]
+          setSelectedAccount(firstAccount)
           const previousAnalysis = await fetchLatestAnalysis(firstAccount.id)
           if (previousAnalysis) {
             info('Previous analysis loaded', `Found cached analysis from ${new Date(previousAnalysis.updatedAt || previousAnalysis.createdAt).toLocaleDateString()}`)
@@ -84,9 +122,6 @@ export default function DashboardPage() {
     fetchAccounts()
   }, [token])
 
-  const handleLogout = () => {
-    logout()
-  }
 
   const handleAnalyze = async (accountId: string) => {
     if (!token) return
@@ -94,25 +129,22 @@ export default function DashboardPage() {
     try {
       setAnalyzingAccountId(accountId)
       setError(null)
-      // Reset cache flags for new analysis
       setAnalysisFromCache(false)
       setAnalysisDate(null)
       
       info('Analysis started', 'Scanning your AWS account for cost optimization opportunities...')
       
-      // Use API client with retry logic for analysis (longer timeout for analysis)
       const data = await apiClient.post('/analysis', { accountId }, {
         retryOptions: {
-          maxAttempts: 2, // Fewer retries for long-running analysis
-          delay: 2000 // Longer delay between retries
+          maxAttempts: 2,
+          delay: 2000
         }
       })
 
       setAnalysisResult(data.data?.result)
       setAnalysisDate(new Date().toISOString())
-      setShowAnalysisResult(true)
+      setCurrentView('analysis')
 
-      // Calculate total savings for success message
       const result = data.data?.result
       const totalSavings = (
         (result.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
@@ -122,7 +154,7 @@ export default function DashboardPage() {
         (result.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
       )
 
-      const totalRecommendations = (
+      const totalOpportunities = (
         (result.ec2Recommendations?.length || 0) +
         (result.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
         (result.unusedElasticIPs?.length || 0) +
@@ -132,7 +164,7 @@ export default function DashboardPage() {
 
       success(
         'Analysis completed successfully!',
-        `Found ${totalRecommendations} optimization opportunities with potential savings of £${totalSavings.toFixed(2)}/month`
+        `Found ${totalOpportunities} optimization opportunities with potential savings of £${totalSavings.toFixed(2)}/month`
       )
       
     } catch (err: any) {
@@ -182,7 +214,11 @@ export default function DashboardPage() {
       }
 
       const data = await response.json()
-      setAccounts([...accounts, data.data?.account])
+      const newAccount = data.data?.account
+      setAccounts([...accounts, newAccount])
+      if (!selectedAccount) {
+        setSelectedAccount(newAccount)
+      }
       setShowAddAccount(false)
       success('Account connected successfully!', `${accountData.accountName} is now ready for analysis`)
     } catch (err: any) {
@@ -195,945 +231,538 @@ export default function DashboardPage() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+  const renderOverviewContent = () => (
+    <div className="space-y-8">
+      {/* Hero Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 hover:shadow-lg dark:hover:shadow-gray-900/20 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Savings</p>
+              <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">£{totalMonthlySavings.toFixed(0)}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">per month</p>
+            </div>
+            <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg flex items-center justify-center">
+              <span className="text-emerald-600 dark:text-emerald-400 text-xl">💰</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 hover:shadow-lg dark:hover:shadow-gray-900/20 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Accounts</p>
+              <p className="text-3xl font-bold text-blue-600 dark:text-blue-400">{accounts.length}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">connected</p>
+            </div>
+            <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+              <span className="text-blue-600 dark:text-blue-400 text-xl">🔗</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 hover:shadow-lg dark:hover:shadow-gray-900/20 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Recommendations</p>
+              <p className="text-3xl font-bold text-orange-600 dark:text-orange-400">{totalRecommendations}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">opportunities</p>
+            </div>
+            <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-center">
+              <span className="text-orange-600 dark:text-orange-400 text-xl">💡</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 hover:shadow-lg dark:hover:shadow-gray-900/20 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Annual Impact</p>
+              <p className="text-3xl font-bold text-purple-600 dark:text-purple-400">£{(totalMonthlySavings * 12).toFixed(0)}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">per year</p>
+            </div>
+            <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
+              <span className="text-purple-600 dark:text-purple-400 text-xl">📈</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Charts */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-colors duration-300">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Cost Breakdown</h3>
+              <button className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium">View Details</button>
+            </div>
+            {isLoading ? <SkeletonChart /> : <CostBreakdownChart analysisResult={analysisResult} />}
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-colors duration-300">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Savings Impact</h3>
+              <button className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium">View Details</button>
+            </div>
+            {isLoading ? <SkeletonChart /> : <SavingsImpactChart analysisResult={analysisResult} />}
+          </div>
+        </div>
+
+        {/* Activity Feed */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-colors duration-300">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Activity</h3>
+            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+          </div>
+          <div className="space-y-4">
+            {analysisResult ? (
+              <>
+                <div className="flex items-start space-x-3">
+                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mt-0.5">
+                    <span className="text-green-600 text-sm">✅</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">Analysis completed</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Found {totalRecommendations} optimization opportunities</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                      {analysisFromCache && analysisDate ? 
+                        new Date(analysisDate).toLocaleDateString() : 
+                        'Just now'
+                      }
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start space-x-3">
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mt-0.5">
+                    <span className="text-blue-600 text-sm">🔍</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">Infrastructure scanned</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">EC2, S3, EBS, IPs, and Load Balancers</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Recently</p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <span className="text-gray-400 dark:text-gray-500 text-xl">🚀</span>
+                </div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Ready to start</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Connect an account to begin analysis</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderAccountsContent = () => (
+    <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold text-lg">💰</span>
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">
-                    AWS Cost Optimizer
-                  </h1>
-                  <p className="text-sm text-gray-500">Welcome back, {user?.name}</p>
-                </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">AWS Accounts</h2>
+          <p className="text-gray-600 dark:text-gray-400">Manage your connected cloud infrastructure</p>
+        </div>
+        <button
+          onClick={() => setShowAddAccount(true)}
+          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          <span className="mr-2">+</span>
+          Add Account
+        </button>
+      </div>
+
+      {/* Accounts Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {accounts.map((account) => (
+          <div
+            key={account.id}
+            className={`bg-white dark:bg-gray-800 rounded-xl border-2 p-6 cursor-pointer transition-all duration-200 hover:shadow-lg dark:hover:shadow-gray-900/20 ${
+              selectedAccount?.id === account.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+            }`}
+            onClick={() => setSelectedAccount(account)}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+                <span className="text-orange-600 font-bold">AWS</span>
+              </div>
+              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                account.status === 'active' ? 'bg-green-100 text-green-800' : 
+                account.status === 'error' ? 'bg-red-100 text-red-800' : 
+                'bg-yellow-100 text-yellow-800'
+              }`}>
+                {account.status === 'active' ? 'Active' : 
+                 account.status === 'error' ? 'Error' : 
+                 'Inactive'}
+              </span>
+            </div>
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{account.accountName}</h4>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Account ID: {account.accountId || 'Not configured'}</p>
+            <div className="flex space-x-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleAnalyze(account.id)
+                }}
+                disabled={analyzingAccountId === account.id}
+                className={`flex-1 inline-flex items-center justify-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                  analyzingAccountId === account.id
+                    ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                {analyzingAccountId === account.id ? (
+                  <>
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-400 mr-1"></div>
+                    Analyzing
+                  </>
+                ) : (
+                  <>
+                    <span className="mr-1">🔍</span>
+                    Analyze
+                  </>
+                )}
+              </button>
+              <button className="px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                Settings
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {/* Add Account Card */}
+        <div
+          onClick={() => setShowAddAccount(true)}
+          className="bg-gray-50 dark:bg-gray-700/50 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200"
+        >
+          <div className="text-center">
+            <div className="w-12 h-12 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <span className="text-gray-500 dark:text-gray-400 text-xl">+</span>
+            </div>
+            <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Add Account</h4>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Connect a new AWS account to expand your optimization scope</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Account Details Panel */}
+      {selectedAccount && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-colors duration-300">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Account Details</h3>
+            <button className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium">Edit</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Account Name</p>
+              <p className="text-lg text-gray-900 dark:text-white">{selectedAccount.accountName}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">AWS Account ID</p>
+              <p className="text-lg text-gray-900 dark:text-white font-mono">{selectedAccount.accountId || 'Not configured'}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Region</p>
+              <p className="text-lg text-gray-900 dark:text-white">{selectedAccount.region || 'Not specified'}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderAnalysisContent = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Cost Analysis</h2>
+          <p className="text-gray-600">Detailed breakdown of optimization opportunities</p>
+        </div>
+        {selectedAccount && (
+          <button
+            onClick={() => handleAnalyze(selectedAccount.id)}
+            disabled={analyzingAccountId === selectedAccount.id}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {analyzingAccountId === selectedAccount.id ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <span className="mr-2">🔍</span>
+                Run Analysis
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {analysisResult ? (
+        <div className="space-y-6">
+          {/* Analysis Summary */}
+          <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-green-900 mb-2">Analysis Complete</h3>
+                <p className="text-green-700">
+                  Found {totalRecommendations} optimization opportunities with potential savings of £{totalMonthlySavings.toFixed(2)}/month
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-green-600">£{(totalMonthlySavings * 12).toFixed(0)}</p>
+                <p className="text-sm text-green-600">annual savings</p>
               </div>
             </div>
+          </div>
+
+          {/* Service Breakdown */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-lg font-semibold text-gray-900">💾 EBS Volumes</h4>
+                <span className="text-2xl font-bold text-orange-600">{analysisResult.unattachedVolumes?.length || 0}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">Unattached volumes found</p>
+              <p className="text-lg font-medium text-green-600">
+                £{(analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0).toFixed(2)}/month savings
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-lg font-semibold text-gray-900">🖥️ EC2 Instances</h4>
+                <span className="text-2xl font-bold text-blue-600">{analysisResult.ec2Recommendations?.length || 0}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">Rightsizing opportunities</p>
+              <p className="text-lg font-medium text-green-600">
+                £{(analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0).toFixed(2)}/month savings
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-lg font-semibold text-gray-900">🌐 Elastic IPs</h4>
+                <span className="text-2xl font-bold text-red-600">{analysisResult.unusedElasticIPs?.length || 0}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">Unused IP addresses</p>
+              <p className="text-lg font-medium text-green-600">
+                £{(analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0).toFixed(2)}/month savings
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-gray-400 text-2xl">🔍</span>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Data</h3>
+          <p className="text-gray-600 mb-6">Run an analysis on one of your connected accounts to see optimization opportunities</p>
+          {selectedAccount && (
             <button
-              onClick={handleLogout}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              onClick={() => handleAnalyze(selectedAccount.id)}
+              className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
-              Logout
+              <span className="mr-2">🔍</span>
+              Analyze {selectedAccount.accountName}
             </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  const renderMainContent = () => {
+    switch (currentView) {
+      case 'overview':
+        return renderOverviewContent()
+      case 'accounts':
+        return renderAccountsContent()
+      case 'analysis':
+        return renderAnalysisContent()
+      case 'recommendations':
+        return (
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Recommendations View</h2>
+            <p className="text-gray-600">Coming soon - Advanced recommendation management</p>
+          </div>
+        )
+      case 'reports':
+        return (
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Reports View</h2>
+            <p className="text-gray-600">Coming soon - Detailed reporting and exports</p>
+          </div>
+        )
+      case 'settings':
+        return (
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Settings</h2>
+            <p className="text-gray-600">Coming soon - Application preferences and configuration</p>
+          </div>
+        )
+      default:
+        return renderOverviewContent()
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex transition-colors duration-300">
+      {/* Sidebar */}
+      <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col transition-colors duration-300">
+        {/* Logo */}
+        <div className="px-6 py-8">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold">💎</span>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white">CostOptimizer</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">AWS Intelligence</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 px-6 pb-6">
+          <div className="space-y-2">
+            {navigationItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => !item.disabled && setCurrentView(item.id)}
+                disabled={item.disabled}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left rounded-lg transition-all duration-200 ${
+                  currentView === item.id
+                    ? 'bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                    : item.disabled
+                    ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                }`}
+              >
+                <div className="flex items-center space-x-3">
+                  <span className="text-lg">{item.icon}</span>
+                  <span className="font-medium">{item.label}</span>
+                </div>
+                {item.badge && (
+                  <span className="inline-flex items-center justify-center px-2 py-1 text-xs font-bold text-white bg-blue-600 dark:bg-blue-500 rounded-full min-w-[20px]">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        {/* User Menu */}
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center space-x-3 mb-3">
+            <div className="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
+              <span className="text-gray-600 dark:text-gray-300 text-sm font-medium">{user?.name?.charAt(0) || 'U'}</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user?.name}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.email}</p>
+            </div>
+            <button
+              onClick={logout}
+              className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 p-1 transition-colors"
+              title="Logout"
+            >
+              <span className="text-lg">→</span>
+            </button>
+          </div>
+          
+          {/* Theme Toggle */}
+          <div className="flex justify-center">
+            <CompactThemeToggle />
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 sm:px-0">
-          {/* Dashboard Header with Quick Actions */}
-          <div className="mb-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Cost Optimization Dashboard</h2>
-                <p className="text-gray-600 mt-1">Discover savings opportunities across your AWS infrastructure</p>
+      <div className="flex-1 flex flex-col">
+        {/* Top Bar */}
+        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-8 py-4 transition-colors duration-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search accounts, recommendations..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-80 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors duration-200"
+                />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="text-gray-400 dark:text-gray-500">🔍</span>
+                </div>
               </div>
-              <div className="flex space-x-3">
-                <button className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                  📊 View Reports
-                </button>
-                <button className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                  ⚙️ Settings
-                </button>
-              </div>
+              <button
+                className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200"
+                title="Coming soon"
+              >
+                ⌘K
+              </button>
+            </div>
+            <div className="flex items-center space-x-4">
+              <button className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200">
+                <span className="text-lg">🔔</span>
+              </button>
+              <button className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200">
+                <span className="text-lg">❓</span>
+              </button>
             </div>
           </div>
+        </div>
 
-          {/* Enhanced Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div className={`transition-opacity duration-500 ${isLoading ? 'opacity-100' : 'opacity-0 pointer-events-none absolute'}`}>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <SkeletonMetricsCard />
-                <SkeletonMetricsCard />
-                <SkeletonMetricsCard />
-                <SkeletonMetricsCard />
-              </div>
-            </div>
-            <div className={`transition-opacity duration-500 ${!isLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'} ${isLoading ? 'hidden' : 'grid grid-cols-1 md:grid-cols-4 gap-4'}`}>
-              {!isLoading && (
-              <>
-                {/* Connected Accounts Card */}
-                <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
-                        <span className="text-white text-sm">🔗</span>
-                      </div>
-                      <div className="ml-3">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Accounts</p>
-                        <p className="text-2xl font-bold text-gray-900">{accounts?.length || 0}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-xs text-gray-600">
-                      {(accounts?.length || 0) === 0 ? 'Connect first account' : 'Active connections'}
-                    </div>
-                    <div className="flex items-center mt-1">
-                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
-                        <div className="bg-blue-600 h-1.5 rounded-full" style={{width: `${Math.min((accounts?.length || 0) * 25, 100)}%`}}></div>
-                      </div>
-                      <span className="ml-2 text-xs text-gray-500">of 4 max</span>
-                    </div>
-                  </div>
-                </div>
-
-            {/* Monthly Savings Card */}
-            <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 bg-gradient-to-r from-green-500 to-green-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-sm">💰</span>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Monthly Savings</p>
-                    <p className="text-2xl font-bold text-green-600">
-                      {analysisResult ? (
-                        `£${(
-                          (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
-                          (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
-                          (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
-                          (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
-                          (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
-                        ).toFixed(0)}`
-                      ) : '£0'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3">
-                <div className="text-xs text-gray-600">
-                  {analysisResult ? 'Potential reduction' : 'Run analysis'}
-                </div>
-                {analysisResult && (
-                  <div className="text-xs text-green-600 font-medium mt-1">
-                    £{(
-                      (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
-                      (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0) +
-                      (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.annual || 0), 0) +
-                      (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12 +
-                      (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0) * 12
-                    ).toFixed(0)} annually
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Analysis Coverage Card */}
-            <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-sm">📊</span>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Resources</p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {analysisResult ? '5/5' : '0/5'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3">
-                <div className="text-xs text-gray-600 mb-2">
-                  {analysisResult ? 'All services analyzed' : 'Pending analysis'}
-                </div>
-                <div className="grid grid-cols-3 gap-1 text-xs">
-                  <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
-                    <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
-                    EBS
-                  </div>
-                  <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
-                    <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
-                    EC2
-                  </div>
-                  <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
-                    <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
-                    S3
-                  </div>
-                  <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
-                    <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
-                    IPs
-                  </div>
-                  <div className={`flex items-center ${analysisResult ? 'text-green-600' : 'text-gray-400'}`}>
-                    <span className={`w-1.5 h-1.5 ${analysisResult ? 'bg-green-500' : 'bg-gray-300'} rounded-full mr-1.5`}></span>
-                    LBs
-                  </div>
+        {/* Page Content */}
+        <div className="flex-1 p-8 overflow-auto">
+          {isLoading ? (
+            <div className="space-y-6">
+              <div className="animate-pulse">
+                <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="h-32 bg-gray-200 rounded"></div>
+                  <div className="h-32 bg-gray-200 rounded"></div>
+                  <div className="h-32 bg-gray-200 rounded"></div>
+                  <div className="h-32 bg-gray-200 rounded"></div>
                 </div>
               </div>
             </div>
-
-            {/* Recommendations Card */}
-            <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 bg-gradient-to-r from-orange-500 to-orange-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-sm">💡</span>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Recommendations</p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {analysisResult ? (
-                        (analysisResult.ec2Recommendations?.length || 0) +
-                        (analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
-                        (analysisResult.unusedElasticIPs?.length || 0) +
-                        (analysisResult.unattachedVolumes?.length || 0) +
-                        (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation === 'consider-removal' || lb.recommendation === 'review').length || 0)
-                      ) : 0}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3">
-                <div className="text-xs text-gray-600 mb-2">
-                  {analysisResult ? 'Optimization opportunities' : 'Run analysis'}
-                </div>
-                {analysisResult && (
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">High Impact</span>
-                      <span className="font-medium">{(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation === 'consider-removal').length || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Medium Impact</span>
-                      <span className="font-medium">{(analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation === 'review').length || 0)}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
+          ) : error ? (
+            <div className="max-w-2xl mx-auto">
+              <ErrorDisplay 
+                error={error} 
+                onRetry={() => {
+                  setError(null)
+                  setIsLoading(true)
+                  window.location.reload()
+                }}
+                onDismiss={() => setError(null)}
+              />
             </div>
-              </>
-              )}
-            </div>
-          </div>
-
-          {/* Quick Insights and Actions Row */}
-          <div className="relative grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            <div className={`transition-all duration-700 ease-in-out ${isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none absolute'}`}>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2">
-                  <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
-                    <div className="flex justify-between items-center mb-4">
-                      <SkeletonText lines={1} className="w-32" />
-                      <SkeletonText lines={1} className="w-16" />
-                    </div>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-gray-200 rounded-full mr-3 animate-pulse"></div>
-                          <div>
-                            <SkeletonText lines={1} className="w-40 mb-1" />
-                            <SkeletonText lines={1} className="w-32" />
-                          </div>
-                        </div>
-                        <SkeletonText lines={1} className="w-16" />
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-gray-200 rounded-full mr-3 animate-pulse"></div>
-                          <div>
-                            <SkeletonText lines={1} className="w-36 mb-1" />
-                            <SkeletonText lines={1} className="w-28" />
-                          </div>
-                        </div>
-                        <SkeletonText lines={1} className="w-16" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
-                    <SkeletonText lines={1} className="w-24 mb-4" />
-                    <div className="space-y-3">
-                      <div className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-6 h-6 bg-gray-200 rounded mr-3 animate-pulse"></div>
-                          <SkeletonText lines={1} className="w-24" />
-                        </div>
-                        <div className="w-4 h-4 bg-gray-200 rounded animate-pulse"></div>
-                      </div>
-                      <div className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-6 h-6 bg-gray-200 rounded mr-3 animate-pulse"></div>
-                          <SkeletonText lines={1} className="w-20" />
-                        </div>
-                        <div className="w-4 h-4 bg-gray-200 rounded animate-pulse"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className={`transition-all duration-700 ease-in-out delay-200 ${!isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'} ${isLoading ? 'hidden' : 'grid grid-cols-1 lg:grid-cols-3 gap-6'}`}>
-              {!isLoading && (
-              <>
-                {/* Recent Activity */}
-                <div className="lg:col-span-2">
-                  <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-semibold text-gray-900">Recent Activity</h3>
-                      <span className="text-xs text-gray-500">Last 7 days</span>
-                    </div>
-                    <div className="space-y-3">
-                  {analysisResult ? (
-                    <>
-                      <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-green-600 text-sm">{analysisFromCache ? '📁' : '✅'}</span>
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">
-                              {analysisFromCache ? 'Previous analysis loaded' : 'Cost analysis completed'}
-                              {analysisFromCache && <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">Cached</span>}
-                            </p>
-                            <p className="text-xs text-gray-500">Found {(analysisResult.ec2Recommendations?.length || 0) + (analysisResult.unusedElasticIPs?.length || 0) + (analysisResult.unattachedVolumes?.length || 0) + (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)} optimization opportunities</p>
-                          </div>
-                        </div>
-                        <span className="text-xs text-gray-400">
-                          {analysisFromCache && analysisDate ? 
-                            new Date(analysisDate).toLocaleDateString() : 
-                            'Just now'
-                          }
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-blue-600 text-sm">🔍</span>
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">AWS account analyzed</p>
-                            <p className="text-xs text-gray-500">Scanned EC2, S3, EBS, Elastic IPs, and Load Balancers</p>
-                          </div>
-                        </div>
-                        <span className="text-xs text-gray-400">Just now</span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-gray-400 text-sm">🔗</span>
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">Welcome to AWS Cost Optimizer</p>
-                            <p className="text-xs text-gray-500">Connect your first AWS account to get started</p>
-                          </div>
-                        </div>
-                        <span className="text-xs text-gray-400">Now</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg opacity-50">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-gray-400 text-sm">⏳</span>
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">Waiting for account connection</p>
-                            <p className="text-xs text-gray-500">Connect an AWS account to begin analysis</p>
-                          </div>
-                        </div>
-                        <span className="text-xs text-gray-400">Pending</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div>
-              <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
-                <div className="space-y-3">
-                  <button 
-                    onClick={() => setShowAddAccount(true)}
-                    className="w-full flex items-center justify-between p-3 text-left bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors duration-200"
-                  >
-                    <div className="flex items-center">
-                      <span className="text-blue-600 mr-3">➕</span>
-                      <span className="text-sm font-medium text-gray-900">Add AWS Account</span>
-                    </div>
-                    <span className="text-xs text-gray-500">→</span>
-                  </button>
-                  <button className="w-full flex items-center justify-between p-3 text-left bg-green-50 hover:bg-green-100 rounded-lg transition-colors duration-200">
-                    <div className="flex items-center">
-                      <span className="text-green-600 mr-3">📊</span>
-                      <span className="text-sm font-medium text-gray-900">View Reports</span>
-                    </div>
-                    <span className="text-xs text-gray-500">→</span>
-                  </button>
-                  <button className="w-full flex items-center justify-between p-3 text-left bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors duration-200">
-                    <div className="flex items-center">
-                      <span className="text-purple-600 mr-3">💡</span>
-                      <span className="text-sm font-medium text-gray-900">Optimization Tips</span>
-                    </div>
-                    <span className="text-xs text-gray-500">→</span>
-                  </button>
-                  <button className="w-full flex items-center justify-between p-3 text-left bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors duration-200">
-                    <div className="flex items-center">
-                      <span className="text-orange-600 mr-3">⚙️</span>
-                      <span className="text-sm font-medium text-gray-900">Settings</span>
-                    </div>
-                    <span className="text-xs text-gray-500">→</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-              </>
-              )}
-            </div>
-          </div>
-
-          {/* Charts and Visualizations */}
-          <div className="relative grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <div className={`transition-all duration-700 ease-in-out ${isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none absolute'}`}>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <SkeletonChart />
-                <SkeletonChart />
-              </div>
-            </div>
-            <div className={`transition-all duration-700 ease-in-out delay-300 ${!isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'} ${isLoading ? 'hidden' : 'grid grid-cols-1 lg:grid-cols-2 gap-6'}`}>
-              {!isLoading && (
-                <>
-                  <CostBreakdownChart analysisResult={analysisResult} />
-                  <SavingsImpactChart analysisResult={analysisResult} />
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* AWS Accounts Section */}
-          <div className="bg-white rounded-lg shadow border border-gray-100">
-            <div className="px-4 py-4 border-b border-gray-200">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">AWS Accounts</h3>
-                  <p className="text-sm text-gray-500">Manage and monitor your connected accounts</p>
-                </div>
-                <button
-                  onClick={() => setShowAddAccount(true)}
-                  className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 shadow-md hover:shadow-lg"
-                >
-                  <span className="mr-2">+</span>
-                  Add Account
-                </button>
-              </div>
-            </div>
-
-            <div className="px-4 py-4">
-              {isLoading && (
-                <div className="space-y-4">
-                  <SkeletonAccountCard />
-                  <SkeletonAccountCard />
-                </div>
-              )}
-              {error && (
-                <div className="py-8">
-                  <ErrorDisplay 
-                    error={error} 
-                    onRetry={() => {
-                      setError(null)
-                      setIsLoading(true)
-                      // Trigger refetch by setting token (this will retrigger useEffect)
-                      window.location.reload()
-                    }}
-                    onDismiss={() => setError(null)}
-                  />
-                </div>
-              )}
-              {!isLoading && !error && (accounts?.length || 0) === 0 ? (
-                <div className="text-center py-16">
-                  <div className="w-16 h-16 mx-auto mb-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center">
-                    <span className="text-3xl">🔗</span>
-                  </div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-3">No AWS accounts connected</h3>
-                  <p className="text-gray-600 mb-6 max-w-md mx-auto">
-                    Connect your first AWS account to start discovering cost optimization opportunities across your infrastructure
-                  </p>
-                  <button
-                    onClick={() => setShowAddAccount(true)}
-                    className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 shadow-md hover:shadow-lg"
-                  >
-                    <span className="mr-2">+</span>
-                    Connect AWS Account
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {(accounts || []).map((account) => (
-                    <div key={account.id} className="bg-gradient-to-r from-gray-50 to-blue-50 border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow duration-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
-                          <div className="w-12 h-12 bg-gradient-to-r from-orange-400 to-orange-500 rounded-lg flex items-center justify-center">
-                            <span className="text-white font-bold text-lg">AWS</span>
-                          </div>
-                          <div>
-                            <h4 className="text-lg font-semibold text-gray-900">{account.accountName}</h4>
-                            <div className="flex items-center space-x-2 mt-1">
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                account.status === 'active' ? 'bg-green-100 text-green-800' : 
-                                account.status === 'error' ? 'bg-red-100 text-red-800' : 
-                                'bg-yellow-100 text-yellow-800'
-                              }`}>
-                                {account.status === 'active' ? '✅ Active' : 
-                                 account.status === 'error' ? '❌ Error' : 
-                                 '⏳ Inactive'}
-                              </span>
-                              {account.lastAnalyzed && (
-                                <span className="text-xs text-gray-500">
-                                  Last analyzed: {new Date(account.lastAnalyzed).toLocaleDateString()}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <button 
-                            onClick={() => handleAnalyze(account.id)}
-                            disabled={analyzingAccountId === account.id}
-                            className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-300 transform ${
-                              analyzingAccountId === account.id
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed scale-95'
-                                : 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-md hover:shadow-lg'
-                            }`}
-                          >
-                            {analyzingAccountId === account.id ? (
-                              <>
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400 mr-2"></div>
-                                Analyzing...
-                              </>
-                            ) : (
-                              <>
-                                <span className="mr-2">🔍</span>
-                                Analyze
-                              </>
-                            )}
-                          </button>
-                          <button className="inline-flex items-center px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors duration-200">
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* CloudFormation Onboarding */}
-          <CloudFormationOnboarding
-            isOpen={showAddAccount}
-            onClose={() => setShowAddAccount(false)}
-            onSubmit={handleAddAccount}
-            isLoading={isAddingAccount}
-          />
-
-          {/* Analysis Result Modal */}
-          {showAnalysisResult && analysisResult && (
-            <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900">Cost Optimization Analysis Results</h3>
-                    {analysisFromCache && analysisDate && (
-                      <p className="text-sm text-gray-500 mt-1">
-                        📁 Previous analysis from {new Date(analysisDate).toLocaleDateString()}
-                        <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">Cached</span>
-                      </p>
-                    )}
-                  </div>
-                  {analysisFromCache && accounts.length > 0 && (
-                    <button
-                      onClick={() => {
-                        setShowAnalysisResult(false)
-                        handleAnalyze(accounts[0].id)
-                      }}
-                      className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition-colors"
-                    >
-                      Run Fresh Analysis
-                    </button>
-                  )}
-                </div>
-                
-                <div className="space-y-6">
-                  {/* EBS Volumes Section */}
-                  <div>
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      💾 Unattached EBS Volumes
-                    </h4>
-                    {(analysisResult.unattachedVolumes?.length || 0) > 0 ? (
-                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                        <div className="grid grid-cols-1 gap-3">
-                          {(analysisResult.unattachedVolumes || []).map((vol: any) => (
-                            <div key={vol.volumeId} className="flex justify-between items-center p-3 bg-white rounded border">
-                              <div>
-                                <span className="font-medium text-sm">{vol.volumeId}</span>
-                                <span className="text-gray-600 text-sm ml-2">({vol.size} GB)</span>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-green-600 font-medium">£{vol.potentialSavings?.toFixed(2) || '0.00'}/month</div>
-                                <div className="text-xs text-gray-500">savings</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
-                        ✅ No unattached EBS volumes found - good resource management!
-                      </p>
-                    )}
-                  </div>
-
-                  {/* EC2 Rightsizing Section */}
-                  <div>
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      🖥️ EC2 Rightsizing Recommendations
-                    </h4>
-                    {(analysisResult.ec2Recommendations?.length || 0) > 0 ? (
-                      <div className="space-y-4">
-                        {(analysisResult.ec2Recommendations || []).map((rec: any) => (
-                          <div key={rec.instanceId} className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                            <div className="flex justify-between items-start mb-3">
-                              <div>
-                                <h5 className="font-medium text-gray-900">{rec.instanceId}</h5>
-                                <div className="text-sm text-gray-600">
-                                  {rec.currentInstanceType} → {rec.recommendedInstanceType}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-green-600 font-bold">£{rec.potentialSavings?.monthly?.toFixed(2) || '0.00'}/month</div>
-                                <div className="text-xs text-gray-500">({rec.potentialSavings?.percentage?.toFixed(1) || '0'}% savings)</div>
-                              </div>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
-                              <div className="flex items-center space-x-2">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  rec.confidence === 'high' ? 'bg-green-100 text-green-800' :
-                                  rec.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {rec.confidence} confidence
-                                </span>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  rec.performanceImpact === 'none' ? 'bg-green-100 text-green-800' :
-                                  rec.performanceImpact === 'minimal' ? 'bg-yellow-100 text-yellow-800' :
-                                  rec.performanceImpact === 'moderate' ? 'bg-orange-100 text-orange-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {rec.performanceImpact} impact
-                                </span>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  rec.workloadPattern === 'steady' ? 'bg-blue-100 text-blue-800' :
-                                  rec.workloadPattern === 'peaky' ? 'bg-purple-100 text-purple-800' :
-                                  rec.workloadPattern === 'dev-test' ? 'bg-gray-100 text-gray-800' :
-                                  'bg-gray-100 text-gray-600'
-                                }`}>
-                                  {rec.workloadPattern} workload
-                                </span>
-                              </div>
-                            </div>
-                            
-                            <div className="text-sm text-gray-700 mb-3">
-                              <strong>Analysis:</strong> {rec.reasoning}
-                            </div>
-                            
-                            {rec.gravitonWarning && (
-                              <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
-                                <div className="flex items-start">
-                                  <div className="flex-shrink-0">
-                                    <span className="text-amber-400">⚠️</span>
-                                  </div>
-                                  <div className="ml-2">
-                                    <h6 className="text-sm font-medium text-amber-800">Graviton Migration Warning</h6>
-                                    <p className="text-sm text-amber-700 mt-1">{rec.gravitonWarning}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
-                        ✅ No EC2 rightsizing opportunities found - instances are well-sized!
-                      </p>
-                    )}
-                  </div>
-
-                  {/* S3 Storage Optimization Section */}
-                  <div>
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      🗄️ S3 Storage Optimization
-                    </h4>
-                    {(analysisResult.s3Analysis?.length || 0) > 0 ? (
-                      <div className="space-y-4">
-                        {(analysisResult.s3Analysis || []).map((bucket: any) => (
-                          <div key={bucket.bucketName} className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                            <div className="flex justify-between items-start mb-3">
-                              <div>
-                                <h5 className="font-medium text-gray-900">{bucket.bucketName}</h5>
-                                <div className="text-sm text-gray-600">
-                                  {(bucket.totalSize / (1024 * 1024 * 1024)).toFixed(2)} GB • {bucket.objectCount} objects • {bucket.region}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-green-600 font-bold">£{bucket.potentialSavings?.monthly?.toFixed(2) || '0.00'}/month</div>
-                                <div className="text-xs text-gray-500">potential savings</div>
-                              </div>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-                              <div className="flex items-center space-x-2">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  bucket.hasLifecyclePolicy ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                }`}>
-                                  {bucket.hasLifecyclePolicy ? 'Has lifecycle policy' : 'No lifecycle policy'}
-                                </span>
-                              </div>
-                              <div className="text-sm text-gray-600">
-                                Standard: {bucket.storageClassBreakdown?.standard?.size?.toFixed(1) || '0'} GB
-                              </div>
-                            </div>
-                            
-                            {bucket.recommendations?.length > 0 && (
-                              <div className="space-y-2">
-                                {bucket.recommendations.map((rec: any, index: number) => (
-                                  <div key={index} className="bg-white border border-purple-200 rounded p-3">
-                                    <div className="flex justify-between items-start mb-2">
-                                      <div className="text-sm font-medium text-gray-900">{rec.description}</div>
-                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                        rec.effort === 'low' ? 'bg-green-100 text-green-800' :
-                                        rec.effort === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                        'bg-red-100 text-red-800'
-                                      }`}>
-                                        {rec.effort} effort
-                                      </span>
-                                    </div>
-                                    <div className="text-xs text-gray-600">{rec.details}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
-                        ✅ No S3 storage optimization opportunities found - storage is well-managed!
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Unused Elastic IPs Section */}
-                  <div>
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      🌐 Unused Elastic IPs
-                    </h4>
-                    {(analysisResult.unusedElasticIPs?.length || 0) > 0 ? (
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                        <div className="grid grid-cols-1 gap-3">
-                          {(analysisResult.unusedElasticIPs || []).map((ip: any) => (
-                            <div key={ip.allocationId} className="flex justify-between items-center p-3 bg-white rounded border">
-                              <div>
-                                <span className="font-medium text-sm">{ip.publicIp}</span>
-                                <span className="text-gray-600 text-sm ml-2">({ip.allocationId})</span>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-red-600 font-medium">£{ip.monthlyCost?.toFixed(2) || '3.65'}/month</div>
-                                <div className="text-xs text-gray-500">wasted cost</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-3 p-3 bg-red-100 rounded-md">
-                          <p className="text-sm text-red-800">
-                            💡 <strong>Quick win:</strong> These unassociated Elastic IPs are incurring charges. 
-                            Consider releasing them if they're not needed for failover or other purposes.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
-                        ✅ No unused Elastic IPs found - good resource management!
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Load Balancer Analysis Section */}
-                  <div>
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      ⚖️ Load Balancer Analysis
-                    </h4>
-                    {(analysisResult.loadBalancerAnalysis?.length || 0) > 0 ? (
-                      <div className="space-y-4">
-                        {(analysisResult.loadBalancerAnalysis || []).map((lb: any) => (
-                          <div key={lb.loadBalancerArn} className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                            <div className="flex justify-between items-start mb-3">
-                              <div>
-                                <h5 className="font-medium text-gray-900 flex items-center">
-                                  {lb.loadBalancerName}
-                                  <span className={`ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                    lb.type === 'application' ? 'bg-blue-100 text-blue-800' :
-                                    lb.type === 'network' ? 'bg-purple-100 text-purple-800' :
-                                    'bg-gray-100 text-gray-800'
-                                  }`}>
-                                    {lb.type === 'application' ? 'ALB' : lb.type === 'network' ? 'NLB' : 'Classic'}
-                                  </span>
-                                </h5>
-                                <div className="text-sm text-gray-600 mt-1">
-                                  {lb.scheme} • {lb.targetGroups?.reduce((sum: number, tg: any) => sum + tg.totalTargets, 0) || 0} targets • {lb.state}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className={`font-bold ${lb.potentialSavings > 0 ? 'text-green-600' : 'text-gray-600'}`}>
-                                  {lb.potentialSavings > 0 ? `£${lb.potentialSavings?.toFixed(2)}/month` : 'In Use'}
-                                </div>
-                                <div className="text-xs text-gray-500">
-                                  £{lb.monthlyCost?.toFixed(2)} monthly cost
-                                </div>
-                              </div>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
-                              <div className="flex items-center space-x-2">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  lb.recommendation === 'keep' ? 'bg-green-100 text-green-800' :
-                                  lb.recommendation === 'review' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {lb.recommendation === 'keep' ? '✅ Keep' :
-                                   lb.recommendation === 'review' ? '⚠️ Review' :
-                                   '❌ Consider Removal'}
-                                </span>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  lb.confidenceLevel === 'high' ? 'bg-green-100 text-green-800' :
-                                  lb.confidenceLevel === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {lb.confidenceLevel} confidence
-                                </span>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <span className="text-xs text-gray-600">
-                                  {lb.metrics?.requestCount?.toFixed(0) || 0} requests (7d)
-                                </span>
-                              </div>
-                            </div>
-                            
-                            <div className="text-sm text-gray-700 mb-3">
-                              <strong>Analysis:</strong> {lb.reasoning}
-                            </div>
-                            
-                            {lb.targetGroups && lb.targetGroups.length > 0 && (
-                              <div className="bg-white border border-indigo-200 rounded p-3">
-                                <h6 className="text-sm font-medium text-gray-900 mb-2">Target Groups</h6>
-                                <div className="space-y-2">
-                                  {lb.targetGroups.map((tg: any, index: number) => (
-                                    <div key={tg.targetGroupArn || index} className="flex justify-between items-center text-xs">
-                                      <div>
-                                        <span className="font-medium">{tg.targetGroupName || `Target Group ${index + 1}`}</span>
-                                      </div>
-                                      <div className="flex space-x-4">
-                                        <span className="text-green-600">{tg.healthyTargets} healthy</span>
-                                        <span className="text-red-600">{tg.unhealthyTargets} unhealthy</span>
-                                        <span className="text-gray-500">{tg.totalTargets} total</span>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {lb.recommendation === 'consider-removal' && (
-                              <div className="mt-3 bg-red-50 border border-red-200 rounded-md p-3">
-                                <div className="flex items-start">
-                                  <div className="flex-shrink-0">
-                                    <span className="text-red-400">⚠️</span>
-                                  </div>
-                                  <div className="ml-2">
-                                    <h6 className="text-sm font-medium text-red-800">Potential Cost Savings</h6>
-                                    <p className="text-sm text-red-700 mt-1">
-                                      This load balancer could potentially be removed, saving £{lb.potentialSavings?.toFixed(2)} per month (£{(lb.potentialSavings * 12)?.toFixed(2)} annually).
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-gray-600 bg-green-50 border border-green-200 rounded-lg p-4">
-                        ✅ No idle load balancers found - resources are well-utilized!
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Summary Section */}
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-gray-800 mb-3">💰 Total Potential Savings</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-2xl font-bold text-green-600">
-                          £{(
-                            (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
-                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
-                            (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
-                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
-                            (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
-                          ).toFixed(2)}
-                        </div>
-                        <div className="text-sm text-gray-600">per month</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-green-600">
-                          £{(
-                            (analysisResult.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) * 12 +
-                            (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.annual || 0), 0) +
-                            (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.annual || 0), 0) +
-                            (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) * 12 +
-                            (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0) * 12
-                          ).toFixed(2)}
-                        </div>
-                        <div className="text-sm text-gray-600">per year</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex justify-end space-x-3 mt-6">
-                  <button
-                    onClick={() => setShowAnalysisResult(false)}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
+          ) : (
+            renderMainContent()
           )}
-
-          {/* Toast Container */}
-          <ToastContainer toasts={toasts} onClose={removeToast} />
         </div>
       </div>
+
+      {/* Modals */}
+      <CloudFormationOnboarding
+        isOpen={showAddAccount}
+        onClose={() => setShowAddAccount(false)}
+        onSubmit={handleAddAccount}
+        isLoading={isAddingAccount}
+      />
+
+      {/* Toast Container */}
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   )
-} 
+}

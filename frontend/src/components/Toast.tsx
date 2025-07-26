@@ -48,43 +48,43 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
     switch (toast.type) {
       case 'success':
         return {
-          bg: 'bg-green-50',
-          border: 'border-green-200',
+          bg: 'bg-green-50 dark:bg-green-900/20',
+          border: 'border-green-200 dark:border-green-700',
           icon: '✅',
-          iconBg: 'bg-green-100',
-          iconColor: 'text-green-600',
-          title: 'text-green-800',
-          message: 'text-green-700'
+          iconBg: 'bg-green-100 dark:bg-green-800/30',
+          iconColor: 'text-green-600 dark:text-green-400',
+          title: 'text-green-800 dark:text-green-300',
+          message: 'text-green-700 dark:text-green-400'
         }
       case 'error':
         return {
-          bg: 'bg-red-50',
-          border: 'border-red-200',
+          bg: 'bg-red-50 dark:bg-red-900/20',
+          border: 'border-red-200 dark:border-red-700',
           icon: '❌',
-          iconBg: 'bg-red-100',
-          iconColor: 'text-red-600',
-          title: 'text-red-800',
-          message: 'text-red-700'
+          iconBg: 'bg-red-100 dark:bg-red-800/30',
+          iconColor: 'text-red-600 dark:text-red-400',
+          title: 'text-red-800 dark:text-red-300',
+          message: 'text-red-700 dark:text-red-400'
         }
       case 'warning':
         return {
-          bg: 'bg-yellow-50',
-          border: 'border-yellow-200',
+          bg: 'bg-yellow-50 dark:bg-yellow-900/20',
+          border: 'border-yellow-200 dark:border-yellow-700',
           icon: '⚠️',
-          iconBg: 'bg-yellow-100',
-          iconColor: 'text-yellow-600',
-          title: 'text-yellow-800',
-          message: 'text-yellow-700'
+          iconBg: 'bg-yellow-100 dark:bg-yellow-800/30',
+          iconColor: 'text-yellow-600 dark:text-yellow-400',
+          title: 'text-yellow-800 dark:text-yellow-300',
+          message: 'text-yellow-700 dark:text-yellow-400'
         }
       case 'info':
         return {
-          bg: 'bg-blue-50',
-          border: 'border-blue-200',
+          bg: 'bg-blue-50 dark:bg-blue-900/20',
+          border: 'border-blue-200 dark:border-blue-700',
           icon: 'ℹ️',
-          iconBg: 'bg-blue-100',
-          iconColor: 'text-blue-600',
-          title: 'text-blue-800',
-          message: 'text-blue-700'
+          iconBg: 'bg-blue-100 dark:bg-blue-800/30',
+          iconColor: 'text-blue-600 dark:text-blue-400',
+          title: 'text-blue-800 dark:text-blue-300',
+          message: 'text-blue-700 dark:text-blue-400'
         }
     }
   }
@@ -94,7 +94,7 @@ const ToastComponent: React.FC<ToastProps> = ({ toast, onClose }) => {
   return (
     <div
       className={`
-        ${styles.bg} ${styles.border} border rounded-lg shadow-lg p-4 mb-3 max-w-sm w-full
+        ${styles.bg} ${styles.border} border rounded-lg shadow-lg dark:shadow-gray-900/20 p-4 mb-3 max-w-sm w-full
         transform transition-all duration-300 ease-in-out
         ${isVisible && !isExiting ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
       `}

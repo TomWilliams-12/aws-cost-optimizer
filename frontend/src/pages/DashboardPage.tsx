@@ -72,7 +72,7 @@ export default function DashboardPage() {
         // Try to fetch latest analysis for the first connected account
         if (fetchedAccounts.length > 0) {
           const firstAccount = fetchedAccounts[0]
-          await fetchLatestAnalysis(firstAccount.accountId)
+          await fetchLatestAnalysis(firstAccount.id)
         }
       } catch (err: any) {
         setError(err.message)
@@ -640,7 +640,7 @@ export default function DashboardPage() {
                     <button
                       onClick={() => {
                         setShowAnalysisResult(false)
-                        handleAnalyze(accounts[0].accountId)
+                        handleAnalyze(accounts[0].id)
                       }}
                       className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition-colors"
                     >

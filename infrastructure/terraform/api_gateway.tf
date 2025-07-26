@@ -6,7 +6,7 @@ locals {
     "GET /accounts"      = "accounts"
     "POST /accounts"     = "accounts"
     "POST /analysis"     = "analysis"
-    "GET /analysis/{id}" = "analysis"
+    "GET /analysis/{accountId}" = "analysis"
     "POST /reports"      = "reports"
     "GET /reports/{id}"  = "reports"
     "POST /subscriptions" = "stripe"

@@ -1195,6 +1195,8 @@ function generateClassicLoadBalancerRecommendation(
 // Fetch latest analysis results for an account
 async function getLatestAnalysis(userId: string, accountId: string): Promise<any | null> {
   try {
+    console.log(`Searching for latest analysis - userId: ${userId}, accountId: ${accountId}`)
+    
     // For now, scan the table to find the latest analysis (we'll optimize with GSI later)
     const { ScanCommand } = await import('@aws-sdk/lib-dynamodb')
     
@@ -1211,13 +1213,19 @@ async function getLatestAnalysis(userId: string, accountId: string): Promise<any
       }
     }))
 
+    console.log(`DynamoDB scan result: Found ${result.Items?.length || 0} items`)
+    
     if (result.Items && result.Items.length > 0) {
+      console.log('Sample item structure:', JSON.stringify(result.Items[0], null, 2))
+      
       // Sort by updatedAt to get the most recent
       const sortedItems = result.Items.sort((a, b) => 
         new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
       )
       
       const latestAnalysis = sortedItems[0]
+      console.log(`Returning latest analysis: ${latestAnalysis.analysisId}`)
+      
       return {
         analysisId: latestAnalysis.analysisId,
         result: latestAnalysis.result,
@@ -1226,6 +1234,7 @@ async function getLatestAnalysis(userId: string, accountId: string): Promise<any
       }
     }
 
+    console.log('No completed analysis found for this user and account')
     return null
   } catch (error) {
     console.error('Error fetching latest analysis:', error)
@@ -1238,23 +1247,41 @@ export const handler = async (
   context: Context
 ): Promise<APIGatewayProxyResult> => {
   try {
+    console.log('Analysis handler started')
+    console.log('HTTP Method:', event.httpMethod || event.requestContext?.http?.method)
+    console.log('Request path:', event.path || event.rawPath || event.requestContext?.http?.path)
+    console.log('Full event structure:', JSON.stringify(event, null, 2))
+    
     // Authenticate user
+    console.log('Starting authentication...')
     const user = await authenticateUser(event);
     if (!user) {
+      console.log('Authentication failed')
       return createErrorResponse(401, 'Unauthorized');
     }
+    console.log('Authentication successful for user:', user.userId)
 
+    // Determine HTTP method (API Gateway v2 uses different event structure)
+    const httpMethod = event.httpMethod || event.requestContext?.http?.method
+    
     // Handle GET request - fetch latest analysis
-    if (event.httpMethod === 'GET') {
-      const accountId = event.pathParameters?.accountId || event.queryStringParameters?.accountId
+    if (httpMethod === 'GET') {
+      console.log('GET request received for analysis fetch')
+      console.log('Path parameters:', event.pathParameters)
+      console.log('Query parameters:', event.queryStringParameters)
+      
+      const accountId = event.pathParameters?.accountId || event.pathParameters?.proxy
       
       if (!accountId) {
-        return createErrorResponse(400, 'accountId is required')
+        console.log('Missing accountId in path parameters')
+        return createErrorResponse(400, 'accountId is required in path')
       }
 
+      console.log(`Fetching latest analysis for user: ${user.userId}, account: ${accountId}`)
       const latestAnalysis = await getLatestAnalysis(user.userId, accountId)
       
       if (latestAnalysis) {
+        console.log('Found previous analysis, returning cached result')
         return createSuccessResponse({
           message: 'Latest analysis retrieved successfully',
           analysisId: latestAnalysis.analysisId,
@@ -1264,6 +1291,7 @@ export const handler = async (
           cached: true
         })
       } else {
+        console.log('No previous analysis found, returning empty result')
         return createSuccessResponse({
           message: 'No previous analysis found',
           result: null,
@@ -1419,6 +1447,18 @@ export const handler = async (
     const cleanedAnalysisResult = removeUndefinedValues(analysisResult)
 
     const analysisFinishTime = new Date().toISOString();
+    
+    // Ensure result is properly cleaned before storing
+    let finalResult;
+    try {
+        finalResult = cleanedAnalysisResult;
+        // Additional safety check - stringify and parse to remove any remaining undefined values
+        finalResult = JSON.parse(JSON.stringify(cleanedAnalysisResult));
+    } catch (error) {
+        console.error('Error cleaning analysis result:', error);
+        finalResult = cleanedAnalysisResult;
+    }
+    
     await dynamo.send(new UpdateCommand({
         TableName: ANALYSES_TABLE,
         Key: { analysisId },
@@ -1430,7 +1470,7 @@ export const handler = async (
         },
         ExpressionAttributeValues: {
             ':status': 'completed',
-            ':result': cleanedAnalysisResult,
+            ':result': finalResult,
             ':updatedAt': analysisFinishTime,
         },
     }));
@@ -1442,7 +1482,8 @@ export const handler = async (
       result: analysisResult,
     })
   } catch (error) {
-    console.error('Analysis error:', error)
+    console.error('Analysis handler error:', error)
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace')
     return createErrorResponse(500, 'Internal server error')
   }
 } 

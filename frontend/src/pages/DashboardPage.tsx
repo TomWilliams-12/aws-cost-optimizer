@@ -4,13 +4,25 @@ import { Account } from '../types'
 import { CloudFormationOnboarding } from '../components/CloudFormationOnboarding'
 import { CostBreakdownChart } from '../components/CostBreakdownChart'
 import { SavingsImpactChart } from '../components/SavingsImpactChart'
+import { SkeletonMetricsCard, SkeletonAccountCard, SkeletonText, SkeletonChart } from '../components/Skeleton'
+import { ErrorDisplay } from '../components/ErrorDisplay'
+import { parseApiError, EnhancedError } from '../utils/errorHandling'
+import { ApiClient } from '../utils/retryLogic'
+import { ToastContainer, useToast } from '../components/Toast'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
+
+// Create API client with retry logic
+const apiClient = new ApiClient(API_URL, {}, {
+  maxAttempts: 3,
+  delay: 1000,
+  backoffMultiplier: 1.5 // Gentler backoff for UX
+})
 
 export default function DashboardPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<EnhancedError | null>(null)
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [isAddingAccount, setIsAddingAccount] = useState(false)
   const [showAnalysisResult, setShowAnalysisResult] = useState(false)
@@ -19,26 +31,17 @@ export default function DashboardPage() {
   const [analysisFromCache, setAnalysisFromCache] = useState(false)
   const [analysisDate, setAnalysisDate] = useState<string | null>(null)
   const { user, token, logout } = useAuth()
+  const { toasts, removeToast, success, error: showError, info } = useToast()
 
   // Function to fetch latest analysis for an account
   const fetchLatestAnalysis = async (accountId: string) => {
     try {
-      const response = await fetch(`${API_URL}/analysis/${accountId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        if (data.data?.result && data.data?.cached) {
-          setAnalysisResult(data.data.result)
-          setAnalysisFromCache(true)
-          setAnalysisDate(data.data.updatedAt || data.data.createdAt)
-          return data.data
-        }
+      const data = await apiClient.get(`/analysis/${accountId}`)
+      if (data.data?.result && data.data?.cached) {
+        setAnalysisResult(data.data.result)
+        setAnalysisFromCache(true)
+        setAnalysisDate(data.data.updatedAt || data.data.createdAt)
+        return data.data
       }
     } catch (error) {
       console.log('No previous analysis found for account:', accountId)
@@ -53,29 +56,26 @@ export default function DashboardPage() {
         return
       }
 
+      // Update API client with current token
+      apiClient.setAuthToken(token)
+
       try {
         setError(null)
-        const response = await fetch(`${API_URL}/accounts`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch accounts')
-        }
-
-        const data = await response.json()
+        const data = await apiClient.get('/accounts')
         const fetchedAccounts = data.data?.accounts || []
         setAccounts(fetchedAccounts)
         
         // Try to fetch latest analysis for the first connected account
         if (fetchedAccounts.length > 0) {
           const firstAccount = fetchedAccounts[0]
-          await fetchLatestAnalysis(firstAccount.id)
+          const previousAnalysis = await fetchLatestAnalysis(firstAccount.id)
+          if (previousAnalysis) {
+            info('Previous analysis loaded', `Found cached analysis from ${new Date(previousAnalysis.updatedAt || previousAnalysis.createdAt).toLocaleDateString()}`)
+          }
         }
       } catch (err: any) {
-        setError(err.message)
+        const enhancedError = parseApiError(err, err.response)
+        setError(enhancedError)
       } finally {
         setIsLoading(false)
       }
@@ -98,26 +98,47 @@ export default function DashboardPage() {
       setAnalysisFromCache(false)
       setAnalysisDate(null)
       
-      const response = await fetch(`${API_URL}/analysis`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ accountId }),
+      info('Analysis started', 'Scanning your AWS account for cost optimization opportunities...')
+      
+      // Use API client with retry logic for analysis (longer timeout for analysis)
+      const data = await apiClient.post('/analysis', { accountId }, {
+        retryOptions: {
+          maxAttempts: 2, // Fewer retries for long-running analysis
+          delay: 2000 // Longer delay between retries
+        }
       })
 
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.message || 'Failed to start analysis')
-      }
-
-      const data = await response.json()
       setAnalysisResult(data.data?.result)
       setAnalysisDate(new Date().toISOString())
       setShowAnalysisResult(true)
+
+      // Calculate total savings for success message
+      const result = data.data?.result
+      const totalSavings = (
+        (result.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
+        (result.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
+        (result.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
+        (result.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
+        (result.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
+      )
+
+      const totalRecommendations = (
+        (result.ec2Recommendations?.length || 0) +
+        (result.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
+        (result.unusedElasticIPs?.length || 0) +
+        (result.unattachedVolumes?.length || 0) +
+        (result.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)
+      )
+
+      success(
+        'Analysis completed successfully!',
+        `Found ${totalRecommendations} optimization opportunities with potential savings of £${totalSavings.toFixed(2)}/month`
+      )
+      
     } catch (err: any) {
-      setError(err.message)
+      const enhancedError = parseApiError(err, err.response)
+      setError(enhancedError)
+      showError('Analysis failed', enhancedError.message)
     } finally {
       setAnalyzingAccountId(null)
     }
@@ -163,12 +184,12 @@ export default function DashboardPage() {
       const data = await response.json()
       setAccounts([...accounts, data.data?.account])
       setShowAddAccount(false)
+      success('Account connected successfully!', `${accountData.accountName} is now ready for analysis`)
     } catch (err: any) {
-      const errorMessage = err.name === 'TypeError' && err.message === 'Failed to fetch' 
-        ? 'Network error: Unable to connect to server. Please check your internet connection.'
-        : err.message
-      setError(errorMessage)
-      throw new Error(errorMessage)
+      const enhancedError = parseApiError(err, err.response)
+      setError(enhancedError)
+      showError('Failed to connect account', enhancedError.message)
+      throw new Error(enhancedError.message)
     } finally {
       setIsAddingAccount(false)
     }
@@ -226,31 +247,42 @@ export default function DashboardPage() {
 
           {/* Enhanced Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            {/* Connected Accounts Card */}
-            <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-sm">🔗</span>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Accounts</p>
-                    <p className="text-2xl font-bold text-gray-900">{accounts?.length || 0}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3">
-                <div className="text-xs text-gray-600">
-                  {(accounts?.length || 0) === 0 ? 'Connect first account' : 'Active connections'}
-                </div>
-                <div className="flex items-center mt-1">
-                  <div className="flex-1 bg-gray-200 rounded-full h-1.5">
-                    <div className="bg-blue-600 h-1.5 rounded-full" style={{width: `${Math.min((accounts?.length || 0) * 25, 100)}%`}}></div>
-                  </div>
-                  <span className="ml-2 text-xs text-gray-500">of 4 max</span>
-                </div>
+            <div className={`transition-opacity duration-500 ${isLoading ? 'opacity-100' : 'opacity-0 pointer-events-none absolute'}`}>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <SkeletonMetricsCard />
+                <SkeletonMetricsCard />
+                <SkeletonMetricsCard />
+                <SkeletonMetricsCard />
               </div>
             </div>
+            <div className={`transition-opacity duration-500 ${!isLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'} ${isLoading ? 'hidden' : 'grid grid-cols-1 md:grid-cols-4 gap-4'}`}>
+              {!isLoading && (
+              <>
+                {/* Connected Accounts Card */}
+                <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
+                        <span className="text-white text-sm">🔗</span>
+                      </div>
+                      <div className="ml-3">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Accounts</p>
+                        <p className="text-2xl font-bold text-gray-900">{accounts?.length || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-xs text-gray-600">
+                      {(accounts?.length || 0) === 0 ? 'Connect first account' : 'Active connections'}
+                    </div>
+                    <div className="flex items-center mt-1">
+                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                        <div className="bg-blue-600 h-1.5 rounded-full" style={{width: `${Math.min((accounts?.length || 0) * 25, 100)}%`}}></div>
+                      </div>
+                      <span className="ml-2 text-xs text-gray-500">of 4 max</span>
+                    </div>
+                  </div>
+                </div>
 
             {/* Monthly Savings Card */}
             <div className="bg-white p-4 rounded-lg shadow border border-gray-100 hover:shadow-md transition-shadow duration-200">
@@ -376,18 +408,79 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+              </>
+              )}
+            </div>
           </div>
 
           {/* Quick Insights and Actions Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            {/* Recent Activity */}
-            <div className="lg:col-span-2">
-              <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Recent Activity</h3>
-                  <span className="text-xs text-gray-500">Last 7 days</span>
+          <div className="relative grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div className={`transition-all duration-700 ease-in-out ${isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none absolute'}`}>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2">
+                  <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
+                    <div className="flex justify-between items-center mb-4">
+                      <SkeletonText lines={1} className="w-32" />
+                      <SkeletonText lines={1} className="w-16" />
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center">
+                          <div className="w-8 h-8 bg-gray-200 rounded-full mr-3 animate-pulse"></div>
+                          <div>
+                            <SkeletonText lines={1} className="w-40 mb-1" />
+                            <SkeletonText lines={1} className="w-32" />
+                          </div>
+                        </div>
+                        <SkeletonText lines={1} className="w-16" />
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center">
+                          <div className="w-8 h-8 bg-gray-200 rounded-full mr-3 animate-pulse"></div>
+                          <div>
+                            <SkeletonText lines={1} className="w-36 mb-1" />
+                            <SkeletonText lines={1} className="w-28" />
+                          </div>
+                        </div>
+                        <SkeletonText lines={1} className="w-16" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-3">
+                <div>
+                  <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
+                    <SkeletonText lines={1} className="w-24 mb-4" />
+                    <div className="space-y-3">
+                      <div className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center">
+                          <div className="w-6 h-6 bg-gray-200 rounded mr-3 animate-pulse"></div>
+                          <SkeletonText lines={1} className="w-24" />
+                        </div>
+                        <div className="w-4 h-4 bg-gray-200 rounded animate-pulse"></div>
+                      </div>
+                      <div className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center">
+                          <div className="w-6 h-6 bg-gray-200 rounded mr-3 animate-pulse"></div>
+                          <SkeletonText lines={1} className="w-20" />
+                        </div>
+                        <div className="w-4 h-4 bg-gray-200 rounded animate-pulse"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className={`transition-all duration-700 ease-in-out delay-200 ${!isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'} ${isLoading ? 'hidden' : 'grid grid-cols-1 lg:grid-cols-3 gap-6'}`}>
+              {!isLoading && (
+              <>
+                {/* Recent Activity */}
+                <div className="lg:col-span-2">
+                  <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-semibold text-gray-900">Recent Activity</h3>
+                      <span className="text-xs text-gray-500">Last 7 days</span>
+                    </div>
+                    <div className="space-y-3">
                   {analysisResult ? (
                     <>
                       <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
@@ -494,12 +587,27 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+              </>
+              )}
+            </div>
           </div>
 
           {/* Charts and Visualizations */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <CostBreakdownChart analysisResult={analysisResult} />
-            <SavingsImpactChart analysisResult={analysisResult} />
+          <div className="relative grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className={`transition-all duration-700 ease-in-out ${isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none absolute'}`}>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <SkeletonChart />
+                <SkeletonChart />
+              </div>
+            </div>
+            <div className={`transition-all duration-700 ease-in-out delay-300 ${!isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'} ${isLoading ? 'hidden' : 'grid grid-cols-1 lg:grid-cols-2 gap-6'}`}>
+              {!isLoading && (
+                <>
+                  <CostBreakdownChart analysisResult={analysisResult} />
+                  <SavingsImpactChart analysisResult={analysisResult} />
+                </>
+              )}
+            </div>
           </div>
 
           {/* AWS Accounts Section */}
@@ -522,16 +630,23 @@ export default function DashboardPage() {
 
             <div className="px-4 py-4">
               {isLoading && (
-                <div className="text-center py-12">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                  <p className="mt-4 text-gray-600">Loading your AWS accounts...</p>
+                <div className="space-y-4">
+                  <SkeletonAccountCard />
+                  <SkeletonAccountCard />
                 </div>
               )}
               {error && (
-                <div className="text-center py-12">
-                  <div className="text-red-400 text-4xl mb-4">⚠️</div>
-                  <h3 className="text-lg font-medium text-red-900 mb-2">Error Loading Accounts</h3>
-                  <p className="text-red-600">{error}</p>
+                <div className="py-8">
+                  <ErrorDisplay 
+                    error={error} 
+                    onRetry={() => {
+                      setError(null)
+                      setIsLoading(true)
+                      // Trigger refetch by setting token (this will retrigger useEffect)
+                      window.location.reload()
+                    }}
+                    onDismiss={() => setError(null)}
+                  />
                 </div>
               )}
               {!isLoading && !error && (accounts?.length || 0) === 0 ? (
@@ -584,10 +699,10 @@ export default function DashboardPage() {
                           <button 
                             onClick={() => handleAnalyze(account.id)}
                             disabled={analyzingAccountId === account.id}
-                            className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                            className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-300 transform ${
                               analyzingAccountId === account.id
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-md hover:shadow-lg'
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed scale-95'
+                                : 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-md hover:shadow-lg'
                             }`}
                           >
                             {analyzingAccountId === account.id ? (
@@ -1014,6 +1129,9 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+
+          {/* Toast Container */}
+          <ToastContainer toasts={toasts} onClose={removeToast} />
         </div>
       </div>
     </div>

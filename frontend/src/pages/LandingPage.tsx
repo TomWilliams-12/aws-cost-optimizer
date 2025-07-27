@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
 import { 
   ShieldCheckIcon, 
   LockClosedIcon, 
@@ -19,6 +20,7 @@ import { CompactThemeToggle } from '../components/ThemeToggle'
 
 export default function LandingPage() {
   const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
 
   const features = [
     {
@@ -166,12 +168,21 @@ export default function LandingPage() {
                 Security
               </button>
               <CompactThemeToggle />
-              <button
-                onClick={() => navigate('/login')}
-                className="px-4 py-2 text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 font-medium transition-colors duration-200"
-              >
-                Sign In
-              </button>
+              {isAuthenticated ? (
+                <button
+                  onClick={() => navigate('/dashboard')}
+                  className="px-4 py-2 text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 font-medium transition-colors duration-200"
+                >
+                  Dashboard
+                </button>
+              ) : (
+                <button
+                  onClick={() => navigate('/login')}
+                  className="px-4 py-2 text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 font-medium transition-colors duration-200"
+                >
+                  Sign In
+                </button>
+              )}
               <button
                 onClick={() => navigate('/register')}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors duration-200"

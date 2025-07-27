@@ -1,0 +1,17 @@
+# Dependencies
+*/node_modules/
+
+# Build outputs
+*/dist/
+*/*.zip
+
+# Package files
+*/package-lock.json
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

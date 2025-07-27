@@ -9,6 +9,7 @@ interface CloudFormationOnboardingProps {
     awsAccountId: string
     roleArn: string
     region: string
+    isOrganization?: boolean
   }) => Promise<void>
   isLoading: boolean
 }
@@ -28,7 +29,8 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
     accountName: '',
     awsAccountId: '',
     roleArn: '',
-    region: 'us-east-1'
+    region: 'us-east-1',
+    isOrganization: false
   })
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -96,7 +98,8 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
       accountName: '',
       awsAccountId: '',
       roleArn: '',
-      region: 'us-east-1'
+      region: 'us-east-1',
+      isOrganization: false
     })
     setSelectedRegion('us-east-1')
     setDeployUrls([])
@@ -463,6 +466,21 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="mt-4">
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={accountData.isOrganization}
+                    onChange={(e) => setAccountData({...accountData, isOrganization: e.target.checked})}
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-gray-700">This is an AWS Organization management account</span>
+                    <p className="text-xs text-gray-500">Check this if you're connecting your organization's management account to deploy across all member accounts</p>
+                  </div>
+                </label>
               </div>
             </form>
 

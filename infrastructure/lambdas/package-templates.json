@@ -1,0 +1,107 @@
+{
+  "base": {
+    "version": "1.0.0",
+    "main": "dist/index.js",
+    "scripts": {
+      "build": "tsc",
+      "package": "npm run build && cd dist && zip -r ../{{name}}.zip ."
+    },
+    "devDependencies": {
+      "@types/aws-lambda": "^8.10.145",
+      "@types/node": "^22.5.2",
+      "typescript": "^5.5.4"
+    }
+  },
+  "auth": {
+    "name": "aws-cost-optimizer-auth-lambda",
+    "description": "Authentication Lambda for AWS Cost Optimizer",
+    "dependencies": {
+      "@aws-sdk/client-dynamodb": "^3.632.0",
+      "@aws-sdk/client-secrets-manager": "^3.632.0",
+      "@aws-sdk/lib-dynamodb": "^3.632.0",
+      "bcryptjs": "^2.4.3",
+      "jsonwebtoken": "^9.0.2"
+    },
+    "devDependencies": {
+      "@types/bcryptjs": "^2.4.6",
+      "@types/jsonwebtoken": "^9.0.7"
+    }
+  },
+  "accounts": {
+    "name": "aws-cost-optimizer-accounts-lambda",
+    "description": "Account management Lambda for AWS Cost Optimizer",
+    "dependencies": {
+      "@aws-sdk/client-dynamodb": "^3.632.0",
+      "@aws-sdk/client-secrets-manager": "^3.632.0",
+      "@aws-sdk/client-sts": "^3.632.0",
+      "@aws-sdk/lib-dynamodb": "^3.632.0",
+      "jsonwebtoken": "^9.0.2"
+    },
+    "devDependencies": {
+      "@types/jsonwebtoken": "^9.0.7"
+    }
+  },
+  "analysis": {
+    "name": "aws-cost-optimizer-analysis-lambda", 
+    "description": "Cost analysis Lambda for AWS Cost Optimizer",
+    "dependencies": {
+      "@aws-sdk/client-dynamodb": "^3.632.0",
+      "@aws-sdk/client-ec2": "^3.632.0",
+      "@aws-sdk/client-s3": "^3.632.0",
+      "@aws-sdk/client-cloudwatch": "^3.632.0",
+      "@aws-sdk/client-elastic-load-balancing": "^3.632.0",
+      "@aws-sdk/client-elastic-load-balancing-v2": "^3.632.0",
+      "@aws-sdk/client-secrets-manager": "^3.632.0",
+      "@aws-sdk/client-sts": "^3.632.0",
+      "@aws-sdk/lib-dynamodb": "^3.632.0",
+      "jsonwebtoken": "^9.0.2"
+    },
+    "devDependencies": {
+      "@types/jsonwebtoken": "^9.0.7"
+    }
+  },
+  "reports": {
+    "name": "aws-cost-optimizer-reports-lambda",
+    "description": "Report generation Lambda for AWS Cost Optimizer",
+    "dependencies": {
+      "@aws-sdk/client-dynamodb": "^3.632.0",
+      "@aws-sdk/client-s3": "^3.632.0",
+      "@aws-sdk/client-secrets-manager": "^3.632.0",
+      "@aws-sdk/lib-dynamodb": "^3.632.0",
+      "jsonwebtoken": "^9.0.2"
+    },
+    "devDependencies": {
+      "@types/jsonwebtoken": "^9.0.7"
+    }
+  },
+  "stripe": {
+    "name": "aws-cost-optimizer-stripe-lambda",
+    "description": "Stripe payment Lambda for AWS Cost Optimizer",
+    "dependencies": {
+      "@aws-sdk/client-dynamodb": "^3.632.0",
+      "@aws-sdk/client-secrets-manager": "^3.632.0",
+      "@aws-sdk/lib-dynamodb": "^3.632.0",
+      "stripe": "^14.14.0",
+      "jsonwebtoken": "^9.0.2"
+    },
+    "devDependencies": {
+      "@types/jsonwebtoken": "^9.0.7"
+    }
+  },
+  "organizations": {
+    "name": "aws-cost-optimizer-organizations-lambda",
+    "description": "AWS Organizations management Lambda",
+    "dependencies": {
+      "@aws-sdk/client-dynamodb": "^3.632.0",
+      "@aws-sdk/client-organizations": "^3.632.0",
+      "@aws-sdk/client-cloudformation": "^3.632.0",
+      "@aws-sdk/client-sts": "^3.632.0",
+      "@aws-sdk/client-secrets-manager": "^3.632.0",
+      "@aws-sdk/lib-dynamodb": "^3.632.0",
+      "jsonwebtoken": "^9.0.2"
+    },
+    "devDependencies": {
+      "@types/jsonwebtoken": "^9.0.7"
+    }
+  }
+}

@@ -19,32 +19,32 @@ locals {
   # Lambda function configurations
   lambda_functions = {
     auth = {
-      handler     = "handlers/auth.handler"
+      handler     = "index.handler"
       timeout     = 30
       memory_size = 256
     }
     accounts = {
-      handler     = "handlers/accounts.handler"
+      handler     = "index.handler"
       timeout     = 30
       memory_size = 256
     }
     analysis = {
-      handler     = "handlers/analysis.handler"
+      handler     = "index.handler"
       timeout     = 300
       memory_size = 1024
     }
     reports = {
-      handler     = "handlers/reports.handler"
+      handler     = "index.handler"
       timeout     = 300
       memory_size = 1024
     }
     stripe = {
-      handler     = "handlers/stripe.handler"
+      handler     = "index.handler"
       timeout     = 30
       memory_size = 256
     }
     organizations = {
-      handler     = "handlers/organizations.handler"
+      handler     = "index.handler"
       timeout     = 300
       memory_size = 512
     }
@@ -214,25 +214,18 @@ resource "aws_iam_role_policy" "lambda_aws_analysis_policy" {
   })
 }
 
-# Archive Lambda code
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_dir  = "${path.module}/../../backend/dist"
-  output_path = "${path.module}/lambda_function.zip"
-}
-
-# Lambda functions using for_each
+# Lambda functions using for_each with individual packages
 resource "aws_lambda_function" "main" {
   for_each = local.lambda_functions
 
-  filename         = data.archive_file.lambda_zip.output_path
+  filename         = "${path.module}/../lambdas/${each.key}/${each.key}.zip"
   function_name    = "${local.name_prefix}-${each.key}"
   role             = aws_iam_role.lambda_execution_role.arn
   handler          = each.value.handler
   runtime          = "nodejs22.x"
   timeout          = each.value.timeout
   memory_size      = each.value.memory_size
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  source_code_hash = filebase64sha256("${path.module}/../lambdas/${each.key}/${each.key}.zip")
 
   environment {
     variables = local.lambda_environment_variables

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { AuthResponse } from '../types'
@@ -11,7 +11,14 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
-  const { login } = useAuth()
+  const { login, isAuthenticated } = useAuth()
+
+  // Redirect to dashboard if already logged in
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/dashboard')
+    }
+  }, [isAuthenticated, navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

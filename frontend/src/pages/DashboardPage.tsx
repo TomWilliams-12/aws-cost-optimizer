@@ -7,6 +7,7 @@ import { CostBreakdownChart } from '../components/CostBreakdownChart'
 import { SavingsImpactChart } from '../components/SavingsImpactChart'
 import { SkeletonChart } from '../components/Skeleton'
 import { ErrorDisplay } from '../components/ErrorDisplay'
+import OrganizationManagement from '../components/OrganizationManagement'
 import { parseApiError, EnhancedError } from '../utils/errorHandling'
 import { ApiClient } from '../utils/retryLogic'
 import { ToastContainer, useToast } from '../components/Toast'
@@ -35,7 +36,8 @@ import {
   LogOutIcon,
   ShieldCheckIcon,
   DocumentCheckIcon,
-  ClipboardDocumentCheckIcon
+  ClipboardDocumentCheckIcon,
+  BuildingIcon
 } from '../components/Icons'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
@@ -204,11 +206,52 @@ export default function DashboardPage() {
     }
   }
 
+  const handleDeleteAccount = async (accountId: string) => {
+    if (!token) return
+
+    try {
+      setError(null)
+      const response = await fetch(`${API_URL}/accounts/${accountId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.message || errorData.error || errorMessage
+        } catch (e) {
+          // Response wasn't JSON
+        }
+        throw new Error(errorMessage)
+      }
+
+      // Remove account from local state
+      setAccounts(accounts.filter(acc => acc.id !== accountId))
+      
+      // Clear selected account if it was deleted
+      if (selectedAccount?.id === accountId) {
+        setSelectedAccount(null)
+        setAnalysisResult(null)
+      }
+
+      success('Account deleted', 'The AWS account has been removed successfully.')
+    } catch (err: any) {
+      const enhancedError = parseApiError(err, err.response)
+      setError(enhancedError)
+      showError('Delete failed', err.message)
+    }
+  }
+
   const handleAddAccount = async (accountData: {
     accountName: string;
     awsAccountId: string;
     roleArn: string;
     region: string;
+    isOrganization?: boolean;
   }) => {
     if (!token) return
 
@@ -227,6 +270,7 @@ export default function DashboardPage() {
           accountId: accountData.awsAccountId,
           roleArn: accountData.roleArn,
           region: accountData.region,
+          isOrganization: accountData.isOrganization || false,
         }),
       })
 
@@ -427,17 +471,32 @@ export default function DashboardPage() {
               <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
                 <span className="text-orange-600 font-bold">AWS</span>
               </div>
-              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                account.status === 'active' ? 'bg-green-100 text-green-800' : 
-                account.status === 'error' ? 'bg-red-100 text-red-800' : 
-                'bg-yellow-100 text-yellow-800'
-              }`}>
-                {account.status === 'active' ? 'Active' : 
-                 account.status === 'error' ? 'Error' : 
-                 'Inactive'}
-              </span>
+              <div className="flex items-center space-x-2">
+                {account.isOrganization && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                    Organization
+                  </span>
+                )}
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                  account.status === 'active' ? 'bg-green-100 text-green-800' : 
+                  account.status === 'error' ? 'bg-red-100 text-red-800' : 
+                  'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {account.status === 'active' ? 'Active' : 
+                   account.status === 'error' ? 'Error' : 
+                   'Inactive'}
+                </span>
+              </div>
             </div>
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{account.accountName}</h4>
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+              {account.accountName}
+              {account.isOrganization && (
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                  <BuildingIcon className="w-3 h-3 mr-1" />
+                  Organization
+                </span>
+              )}
+            </h4>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Account ID: {account.accountId || 'Not configured'}</p>
             <div className="flex space-x-2">
               <button
@@ -464,8 +523,16 @@ export default function DashboardPage() {
                   </>
                 )}
               </button>
-              <button className="px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
-                Settings
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirm(`Are you sure you want to delete the account "${account.accountName}"? This action cannot be undone.`)) {
+                    handleDeleteAccount(account.id)
+                  }
+                }}
+                className="px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>
@@ -504,8 +571,15 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Organization Management */}
+      {selectedAccount && selectedAccount.isOrganization && (
+        <div className="mt-8">
+          <OrganizationManagement account={selectedAccount} />
+        </div>
+      )}
+
       {/* Account Details Panel */}
-      {selectedAccount && (
+      {selectedAccount && !selectedAccount.isOrganization && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-colors duration-300">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Account Details</h3>

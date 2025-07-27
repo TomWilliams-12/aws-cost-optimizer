@@ -1,0 +1,17 @@
+{
+  "name": "aws-cost-optimizer-lambdas",
+  "version": "1.0.0",
+  "description": "Lambda functions for AWS Cost Optimizer",
+  "private": true,
+  "scripts": {
+    "install:all": "for dir in auth accounts analysis reports stripe organizations; do echo \"Installing $dir...\"; (cd $dir && npm install); done",
+    "build:all": "for dir in auth accounts analysis reports stripe organizations; do echo \"Building $dir...\"; (cd $dir && npm run package); done",
+    "build:auth": "cd auth && npm run package",
+    "build:accounts": "cd accounts && npm run package",
+    "build:analysis": "cd analysis && npm run package",
+    "build:reports": "cd reports && npm run package",
+    "build:stripe": "cd stripe && npm run package",
+    "build:organizations": "cd organizations && npm run package",
+    "clean:all": "for dir in auth accounts analysis reports stripe organizations; do (cd $dir && npm run clean 2>/dev/null || true); done"
+  }
+}

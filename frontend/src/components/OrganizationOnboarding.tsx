@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useAuth } from '../contexts/AuthContext'
 import { 
   CheckCircleIcon, 
   ExclamationTriangleIcon, 
@@ -10,10 +11,18 @@ import {
   MoneyIcon
 } from './Icons'
 
+const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
+
 export default function OrganizationOnboarding() {
+  const { token } = useAuth()
   const [currentStep, setCurrentStep] = useState<'setup' | 'connect' | 'complete'>('setup')
   const [selectedRegion, setSelectedRegion] = useState('us-east-1')
-  const [externalId] = useState(`aws-cost-optimizer-${Date.now()}`)
+  const [externalId] = useState(() => {
+    const timestamp = Date.now().toString(36)
+    const random = crypto.getRandomValues(new Uint8Array(8))
+      .reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '')
+    return `cost-saver-${timestamp}-${random}`
+  })
   const [roleArn, setRoleArn] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -24,11 +33,22 @@ export default function OrganizationOnboarding() {
     const templateUrl = 'https://aws-cost-optimizer-dev-cloudformation-templates.s3.eu-west-2.amazonaws.com/v1/aws-cost-optimizer-organization-role.yaml'
     const stackName = 'AWSCostOptimizerOrganizationRole'
     
-    return `https://console.aws.amazon.com/cloudformation/home?region=${selectedRegion}#/stacks/new?templateURL=${encodeURIComponent(templateUrl)}&stackName=${stackName}&param_ExternalId=${externalId}&param_TrustedAccountId=504264909935`
+    // Build parameters object for cleaner URL construction
+    const params = new URLSearchParams({
+      templateURL: templateUrl,
+      stackName: stackName,
+      param_ExternalId: externalId,
+      param_TrustedAccountId: '504264909935'
+    })
+    
+    return `https://console.aws.amazon.com/cloudformation/home?region=${selectedRegion}#/stacks/create/review?${params.toString()}`
   }
 
   // Add organization account
   const handleAddOrganization = async () => {
+    console.log('handleAddOrganization called')
+    console.log('roleArn:', roleArn)
+    
     if (!roleArn) {
       setError('Please enter the Role ARN from CloudFormation outputs')
       return
@@ -38,10 +58,16 @@ export default function OrganizationOnboarding() {
     setError(null)
 
     try {
-      const token = localStorage.getItem('token')
+      console.log('Token from useAuth:', !!token)
+      
+      if (!token) {
+        setError('You must be logged in to connect an organization')
+        setLoading(false)
+        return
+      }
       
       // First, add the organization account
-      const response = await fetch('/api/accounts', {
+      const response = await fetch(`${API_URL}/accounts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -57,8 +83,26 @@ export default function OrganizationOnboarding() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to add organization')
+        let errorMessage = 'Failed to add organization'
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.error || errorMessage
+        } catch (e) {
+          // If response is not JSON, use status text
+          errorMessage = response.statusText || errorMessage
+        }
+        
+        if (response.status === 401) {
+          errorMessage = 'Authentication failed. Please log in again.'
+          // Clear invalid token
+          localStorage.removeItem('token')
+          // Redirect to login after a delay
+          setTimeout(() => {
+            window.location.href = '/login'
+          }, 2000)
+        }
+        
+        throw new Error(errorMessage)
       }
 
       setCurrentStep('complete')

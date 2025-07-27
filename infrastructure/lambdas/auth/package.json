@@ -1,0 +1,29 @@
+{
+  "name": "aws-cost-optimizer-auth-lambda",
+  "version": "1.0.0",
+  "description": "Authentication Lambda for AWS Cost Optimizer",
+  "main": "dist/index.js",
+  "scripts": {
+    "clean": "rm -rf dist package auth.zip",
+    "build": "tsc",
+    "copy-package": "mkdir -p package && cp -r dist/* package/ && cp package.json package/",
+    "install-prod": "cd package && npm install --production --no-package-lock",
+    "zip": "cd package && zip -rq ../auth.zip .",
+    "package": "npm run clean && npm run build && npm run copy-package && npm run install-prod && npm run zip && rm -rf package",
+    "deploy": "npm run package"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.632.0",
+    "@aws-sdk/client-secrets-manager": "^3.632.0",
+    "@aws-sdk/lib-dynamodb": "^3.632.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.5.2",
+    "typescript": "^5.5.4"
+  }
+}

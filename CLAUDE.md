@@ -36,15 +36,26 @@
 
 ### Infrastructure
 ```
-/infrastructure/terraform/
-├── main.tf              # Provider and general config
-├── api_gateway.tf       # HTTP API Gateway v2 routes (includes organizations endpoints)
-├── lambda.tf           # Lambda functions and permissions (with Organizations support)
-├── dynamodb.tf         # User accounts, analysis tables, and organizations tables
-├── s3.tf              # Frontend hosting and file storage
-├── secrets.tf         # JWT secrets management
-└── cloudformation_hosting.tf # Public CloudFormation templates (individual + organization)
+/infrastructure/
+├── terraform/
+│   ├── main.tf              # Provider and general config
+│   ├── api_gateway.tf       # HTTP API Gateway v2 routes (includes organizations endpoints)
+│   ├── lambda.tf           # Lambda functions and permissions (with Organizations support)
+│   ├── dynamodb.tf         # User accounts, analysis tables, and organizations tables
+│   ├── s3.tf              # Frontend hosting and file storage
+│   ├── secrets.tf         # JWT secrets management
+│   └── cloudformation_hosting.tf # Public CloudFormation templates (individual + organization)
+└── lambdas/                # Individual Lambda packages (TypeScript)
+    ├── auth/               # Authentication handler (3.6MB)
+    ├── accounts/           # Account management (3.7MB)
+    ├── analysis/           # Cost analysis engine (9.5MB)
+    ├── reports/            # Report generation (4.7MB)
+    ├── stripe/             # Payment processing (5.2MB)
+    ├── organizations/      # AWS Organizations (4.7MB)
+    └── package.json        # Root package with build scripts
 ```
+
+Each Lambda is now individually packaged with only its required dependencies, reducing package sizes by 82-93% compared to the previous monolithic 54MB deployment.
 
 ## Key Components
 
@@ -115,21 +126,37 @@ Key functions:
 
 ### Local Development
 ```bash
-# Backend
-cd backend
-npm install
-npm run dev          # Local development server
-
 # Frontend  
 cd frontend
 npm install
 npm run dev         # Vite development server
+
+# Lambda Functions
+cd infrastructure/lambdas
+npm run install:all  # Install dependencies for all Lambdas
+npm run build:all    # Build all Lambda packages
+
+# Individual Lambda development
+cd infrastructure/lambdas/auth
+npm install
+npm run package     # Build and create deployment package
 
 # Infrastructure
 cd infrastructure/terraform
 terraform plan      # Review changes
 terraform apply     # Deploy to AWS
 ```
+
+### Lambda Development Workflow
+1. **Edit Lambda code**: Modify TypeScript files in `infrastructure/lambdas/{function}/src/`
+2. **Build the Lambda**: Run `npm run package` in the Lambda directory
+3. **Deploy**: Run `terraform apply` from `infrastructure/terraform/`
+4. **Build all Lambdas**: Run `npm run build:all` from `infrastructure/lambdas/`
+5. **Note**: Each Lambda has its own package with minimal dependencies for optimal performance
+
+### Important Development Notes
+- **Terraform Deployments**: The user will ALWAYS run `terraform apply` commands manually. Never run terraform apply automatically - only prepare the changes and inform the user when they need to deploy.
+- **Lambda Architecture**: Each Lambda function is individually packaged with only its required dependencies, significantly reducing cold start times and deployment sizes.
 
 ### Environment Variables
 - `JWT_SECRET_NAME` - AWS Secrets Manager secret name
@@ -193,13 +220,28 @@ terraform apply     # Deploy to AWS
 
 ## Next Steps
 
-### Phase 1 ✅ **COMPLETED**
+### Immediate Issues (July 27, 2025)
+- 🔴 **Organizations Detection 500 Error** 
+  - API Gateway returning 500, CloudWatch logs now available
+  - Lambda function may not have updated code deployed
+  - Need to run `terraform apply` to update Lambda functions
+- 🏢 **Multi-Organization Architecture**
+  - AWS = 1 organization per account (1:1 relationship)
+  - Customer may manage multiple organizations
+  - Need to decide: separate accounts vs unified dashboard
+- 🔄 **Lambda Deployment** 
+  - ZIP file created but Lambda functions need updating
+  - Run full `terraform apply` to deploy latest code
+
+### Completed in Recent Sessions
+- ✅ **Organization Management UI** - Full StackSet deployment interface
+- ✅ **Authentication Improvements** - Auto-redirect when logged in, Dashboard button
+- ✅ **Account Deletion** - Delete button with confirmation dialog
+- ✅ **Backend CORS Fixes** - Added proper headers to all responses
 - ✅ **Debug analysis persistence** - FIXED: DynamoDB undefined values and API Gateway v2 routing
 - ✅ **Enterprise UI transformation** - Complete redesign to sophisticated multi-panel application
 - ✅ **Dark mode implementation** - Comprehensive theming system with persistence
 - ✅ **Professional icon system** - SVG library replacing all emoji icons
-- 🔄 **Test Elastic IP detection** - Validate enhanced detection logic  
-- 📋 **Enhanced error handling** - Improve user feedback for edge cases
 
 ### Phase 2: Trust & Security
 - 🔒 **Security documentation** - Read-only permission audit

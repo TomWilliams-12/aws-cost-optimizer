@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "clean": "rm -rf dist package stripe.zip",
+    "build": "tsc",
+    "copy-package": "mkdir -p package && cp -r dist/* package/ && cp package.json package/",
+    "install-prod": "cd package && npm install --production --no-package-lock",
+    "zip": "cd package && zip -rq ../stripe.zip .",
+    "package": "npm run clean && npm run build && npm run copy-package && npm run install-prod && npm run zip && rm -rf package",
+    "deploy": "npm run package"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.5.2",
+    "typescript": "^5.5.4",
+    "@types/jsonwebtoken": "^9.0.7"
+  },
+  "name": "aws-cost-optimizer-stripe-lambda",
+  "description": "Stripe payment Lambda for AWS Cost Optimizer",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.632.0",
+    "@aws-sdk/client-secrets-manager": "^3.632.0",
+    "@aws-sdk/lib-dynamodb": "^3.632.0",
+    "stripe": "^14.14.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

@@ -21,6 +21,8 @@ export interface Account {
   lastAnalyzed?: string;
   createdAt: string;
   updatedAt: string;
+  isOrganization?: boolean;
+  externalId?: string;
 }
 
 export interface AuthResponse {

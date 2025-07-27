@@ -280,3 +280,41 @@ export const QuestionMarkCircleIcon: React.FC<IconProps> = ({ className = '', si
     <circle cx="12" cy="17" r="0.5" fill="currentColor"/>
   </svg>
 )
+
+export const BuildingIcon: React.FC<IconProps> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M3 21h18"/>
+    <path d="M5 21V7l8-4v18"/>
+    <path d="M19 21V11l-6-4"/>
+    <line x1="9" y1="9" x2="9" y2="9.01"/>
+    <line x1="9" y1="12" x2="9" y2="12.01"/>
+    <line x1="9" y1="15" x2="9" y2="15.01"/>
+    <line x1="9" y1="18" x2="9" y2="18.01"/>
+  </svg>
+)
+
+export const PlayIcon: React.FC<IconProps> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <polygon points="5 3 19 12 5 21 5 3"/>
+  </svg>
+)
+
+export const LoaderIcon: React.FC<IconProps> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <line x1="12" y1="2" x2="12" y2="6"/>
+    <line x1="12" y1="18" x2="12" y2="22"/>
+    <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/>
+    <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
+    <line x1="2" y1="12" x2="6" y2="12"/>
+    <line x1="18" y1="12" x2="22" y2="12"/>
+    <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/>
+    <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
+  </svg>
+)
+
+export const UserIcon: React.FC<IconProps> = ({ className = '', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+    <circle cx="12" cy="7" r="4"/>
+  </svg>
+)

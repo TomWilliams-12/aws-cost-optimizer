@@ -4,16 +4,17 @@ Description: 'AWS Cost Optimizer Organization Management Role - Allows detection
 Parameters:
   ExternalId:
     Type: String
-    Description: 'External ID for cross-account role access'
+    Description: 'External ID for cross-account role access - Copy from the AWS Cost Optimizer setup page'
     MinLength: 6
     MaxLength: 128
-    Default: 'cost-optimizer-org-2025'
+    NoEcho: false
   
   TrustedAccountId:
     Type: String
-    Description: 'AWS Account ID of the Cost Optimizer service'
+    Description: 'AWS Account ID of the Cost Optimizer service (do not change)'
     Default: '504264909935'
     AllowedPattern: '[0-9]{12}'
+    ConstraintDescription: 'Must be the AWS Cost Optimizer service account ID'
 
 Resources:
   OrganizationCostOptimizerRole:

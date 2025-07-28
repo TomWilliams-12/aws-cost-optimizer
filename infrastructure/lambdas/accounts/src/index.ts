@@ -1,6 +1,6 @@
 import { APIGatewayProxyResult, Context } from 'aws-lambda'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb'
+import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb'
 import { STSClient, AssumeRoleCommand, GetCallerIdentityCommand } from '@aws-sdk/client-sts'
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
 import { randomUUID } from 'crypto'
@@ -107,9 +107,23 @@ export const list = async (
       },
     }))
 
-    const accounts = (result.Items || []).map(item => ({
+    // Also get system accounts (self-registered) - for now, return all
+    // In the future, filter by user's email domain or organization
+    const systemResult = await dynamo.send(new QueryCommand({
+      TableName: ACCOUNTS_TABLE,
+      IndexName: 'UserIndex',
+      KeyConditionExpression: 'userId = :userId',
+      ExpressionAttributeValues: {
+        ':userId': 'SYSTEM',
+      },
+    }))
+
+    // Combine user's direct accounts and system accounts
+    const allItems = [...(result.Items || []), ...(systemResult.Items || [])]
+
+    const accounts = allItems.map(item => ({
       id: item.accountId,
-      accountId: item.awsAccountId,
+      accountId: item.awsAccountId || item.accountId.replace('self-', ''),
       accountName: item.accountName,
       region: item.region,
       roleArn: item.roleArn,
@@ -119,6 +133,8 @@ export const list = async (
       updatedAt: item.updatedAt,
       isOrganization: item.isOrganization || false,
       externalId: item.externalId,
+      registrationType: item.registrationType,
+      lastSeen: item.lastSeen,
     }))
 
     return createSuccessResponse({ accounts })
@@ -330,7 +346,8 @@ export const remove = async (
 
     const account = accountResult.Item as AccountRecord
 
-    if (account.userId !== user.userId) {
+    // Allow deletion of user's own accounts or SYSTEM accounts (self-registered)
+    if (account.userId !== user.userId && account.userId !== 'SYSTEM') {
       return createErrorResponse(403, 'Access denied')
     }
 
@@ -347,6 +364,116 @@ export const remove = async (
   }
 }
 
+// Handle self-registration from customer Lambda functions
+async function handleRegistration(event: any, context: Context): Promise<APIGatewayProxyResult> {
+  try {
+    // Validate registration token (external ID)
+    const registrationToken = event.headers?.['x-registration-token'] || event.headers?.['X-Registration-Token'];
+    if (!registrationToken) {
+      return createErrorResponse(401, 'Missing registration token')
+    }
+
+    // Parse request body
+    const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body
+    const {
+      accountId,
+      accountName,
+      region,
+      roleArn,
+      externalId,
+      organizationId,
+      isManagementAccount,
+      registrationType
+    } = body
+
+    // Validate required fields
+    if (!accountId || !roleArn || !externalId || !region) {
+      return createErrorResponse(400, 'Missing required fields')
+    }
+
+    // Verify the registration token matches the external ID
+    if (registrationToken !== externalId) {
+      return createErrorResponse(401, 'Invalid registration token')
+    }
+
+    // Validate the role can be assumed
+    try {
+      const assumeRoleCommand = new AssumeRoleCommand({
+        RoleArn: roleArn,
+        RoleSessionName: 'cost-optimizer-registration-validation',
+        ExternalId: externalId,
+      })
+      await stsClient.send(assumeRoleCommand)
+    } catch (error) {
+      console.error('Failed to assume role during registration:', error)
+      return createErrorResponse(400, 'Unable to assume provided role')
+    }
+
+    // For heartbeats, update the last seen timestamp
+    if (registrationType === 'heartbeat') {
+      const updateParams = {
+        TableName: ACCOUNTS_TABLE,
+        Key: {
+          accountId: `self-${accountId}` // Prefix to avoid conflicts
+        },
+        UpdateExpression: 'SET lastSeen = :timestamp, heartbeatCount = if_not_exists(heartbeatCount, :zero) + :one, #status = :status',
+        ExpressionAttributeNames: {
+          '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+          ':timestamp': new Date().toISOString(),
+          ':zero': 0,
+          ':one': 1,
+          ':status': 'active'
+        }
+      }
+      
+      await dynamo.send(new UpdateCommand(updateParams))
+      
+      return createSuccessResponse({
+        message: 'Heartbeat recorded',
+        accountId,
+        registrationType
+      })
+    }
+
+    // For initial registration, create or update the account
+    const accountRecordId = `self-${accountId}` // Prefix for self-registered accounts
+    const accountData = {
+      accountId: accountRecordId,
+      userId: 'SYSTEM', // System accounts for self-registered
+      awsAccountId: accountId,
+      accountName,
+      roleArn,
+      externalId,
+      region,
+      organizationId: organizationId || null,
+      isOrganization: isManagementAccount || false,
+      isManagementAccount: isManagementAccount || false,
+      registrationType: 'self-registered',
+      createdAt: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+      status: 'active'
+    }
+
+    await dynamo.send(new PutCommand({
+      TableName: ACCOUNTS_TABLE,
+      Item: accountData
+    }))
+
+    console.log(`Account ${accountId} self-registered successfully`)
+    
+    return createSuccessResponse({
+      message: 'Account registered successfully',
+      account: accountData
+    })
+
+  } catch (error) {
+    console.error('Registration error:', error)
+    return createErrorResponse(500, 'Registration failed')
+  }
+}
+
 // Main handler function that routes based on HTTP method
 export const handler = async (
   event: any,
@@ -355,6 +482,12 @@ export const handler = async (
   try {
     // API Gateway v2 (HTTP API) uses different event structure than v1 (REST API)
     const method = (event as any).requestContext?.http?.method || event.httpMethod;
+    const path = (event as any).requestContext?.http?.path || event.path || '';
+    
+    // Handle registration endpoint separately (no auth required)
+    if (path.endsWith('/register') && method === 'POST') {
+      return handleRegistration(event, context)
+    }
     
     switch (method) {
       case 'OPTIONS':

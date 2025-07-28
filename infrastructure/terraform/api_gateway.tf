@@ -5,6 +5,7 @@ locals {
     "POST /auth"         = "auth"
     "GET /accounts"      = "accounts"
     "POST /accounts"     = "accounts"
+    "POST /accounts/register" = "accounts"
     "DELETE /accounts/{accountId}" = "accounts"
     "POST /analysis"     = "analysis"
     "GET /analysis/{accountId}" = "analysis"

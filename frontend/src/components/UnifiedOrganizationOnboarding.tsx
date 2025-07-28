@@ -1,18 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import OrganizationManagement from './OrganizationManagement'
 import { 
   CheckCircleIcon, 
   ExclamationTriangleIcon, 
-  ArrowRightIcon,
   CloudIcon,
   ShieldCheckIcon,
-  RocketIcon,
   ServerIcon,
   MoneyIcon,
   BuildingIcon,
   LoaderIcon,
-  UserIcon,
   FolderIcon,
   PlayIcon
 } from './Icons'
@@ -59,7 +55,7 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
   const [roleArn, setRoleArn] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [connectedAccount, setConnectedAccount] = useState<any>(null)
+  const [, setConnectedAccount] = useState<any>(null)
   const [organization, setOrganization] = useState<OrganizationInfo | null>(null)
   const [deploymentMode, setDeploymentMode] = useState<'ENTIRE_ORG' | 'SPECIFIC_OUS'>('ENTIRE_ORG')
   const [selectedOUs, setSelectedOUs] = useState<string[]>([])
@@ -69,62 +65,68 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
 
   // Generate CloudFormation URL
   const getCloudFormationUrl = () => {
-    const templateUrl = 'https://aws-cost-optimizer-dev-cloudformation-templates.s3.eu-west-2.amazonaws.com/v1/aws-cost-optimizer-organization-role.yaml'
-    const stackName = 'AWSCostOptimizerOrganizationRole'
+    // Use the complete template with Lambda for self-registration
+    const templateUrl = 'https://aws-cost-optimizer-dev-cloudformation-templates.s3.eu-west-2.amazonaws.com/v1/aws-cost-optimizer-complete.yaml'
+    const stackName = 'AWS-Cost-Optimizer-Organization'
     
     const params = new URLSearchParams({
       templateURL: templateUrl,
       stackName: stackName,
       param_ExternalId: externalId,
-      param_TrustedAccountId: '504264909935'
+      param_TrustedAccountId: '504264909935',
+      param_ApiEndpoint: 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev',
+      param_IsManagementAccount: 'true'  // This is always for management account
     })
     
     return `https://console.aws.amazon.com/cloudformation/home?region=${selectedRegion}#/stacks/create/review?${params.toString()}`
   }
 
-  // Add organization account to the system
-  const addOrganizationAccount = async () => {
-    if (!roleArn) {
-      setError('Please enter the Role ARN from CloudFormation outputs')
-      return false
-    }
-
+  // Wait for Lambda self-registration
+  const waitForSelfRegistration = async () => {
     setLoading(true)
     setError(null)
-
-    try {
-      const response = await fetch(`${API_URL}/accounts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          accountName: 'AWS Organization Management',
-          roleArn,
-          externalId,
-          region: selectedRegion,
-          isOrganization: true
+    
+    // Give the Lambda time to self-register (it runs on CloudFormation completion)
+    let attempts = 0
+    const maxAttempts = 30 // 30 seconds total
+    
+    while (attempts < maxAttempts) {
+      try {
+        // Check if account has been registered
+        const response = await fetch(`${API_URL}/accounts`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
         })
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to add organization')
+        
+        if (response.ok) {
+          const data = await response.json()
+          const accounts = data.data?.accounts || []
+          
+          // Look for the management account that was just registered
+          const managementAccount = accounts.find((acc: any) => 
+            acc.isOrganization && 
+            acc.region === selectedRegion &&
+            acc.registrationType === 'self-registered'
+          )
+          
+          if (managementAccount) {
+            setConnectedAccount(managementAccount)
+            setRoleArn(managementAccount.roleArn) // Set the role ARN from the registered account
+            return true
+          }
+        }
+      } catch (err) {
+        console.log('Waiting for self-registration...', err)
       }
-
-      const accountData = await response.json()
-      const newAccount = accountData.data?.account
-      setConnectedAccount(newAccount)
       
-      return true
-    } catch (error) {
-      console.error('Add organization error:', error)
-      setError(error instanceof Error ? error.message : 'Failed to add organization')
-      return false
-    } finally {
-      setLoading(false)
+      attempts++
+      await new Promise(resolve => setTimeout(resolve, 1000))
     }
+    
+    // If we couldn't find the self-registered account, fall back to manual registration
+    setError('Self-registration is taking longer than expected. You may need to refresh the page.')
+    return false
   }
 
   // Detect organization structure
@@ -235,9 +237,10 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
   }
 
   const handleAddAccount = async () => {
-    const success = await addOrganizationAccount()
-    if (success) {
-      setCurrentStep('detect')
+    setCurrentStep('detect')
+    // Wait for Lambda self-registration
+    const registered = await waitForSelfRegistration()
+    if (registered) {
       // Auto-detect organization
       const detected = await detectOrganization()
       if (detected) {
@@ -441,7 +444,8 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
                     Step 1: Deploy CloudFormation Stack
                   </h4>
                   <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    Click below to deploy the IAM role in your AWS management account.
+                    Click below to deploy the IAM role and self-registration Lambda in your AWS management account.
+                    The Lambda will automatically register your account.
                   </p>
                   <button
                     onClick={() => window.open(getCloudFormationUrl(), '_blank')}
@@ -455,18 +459,17 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
                 {/* Role ARN Input */}
                 <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-6">
                   <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
-                    Step 2: Enter Role ARN
+                    Step 2: Wait for Stack Completion
                   </h4>
                   <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    After deployment completes, copy the Role ARN from CloudFormation outputs.
+                    Wait for the CloudFormation stack to complete (Status: CREATE_COMPLETE).
+                    The Lambda function will automatically register your account when the stack is ready.
                   </p>
-                  <input
-                    type="text"
-                    value={roleArn}
-                    onChange={(e) => setRoleArn(e.target.value)}
-                    placeholder="arn:aws:iam::123456789012:role/OrganizationCostOptimizerRole"
-                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  />
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                    <p className="text-blue-800 dark:text-blue-200 text-sm">
+                      ℹ️ No manual steps required! The Lambda will self-register once deployed.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -479,16 +482,16 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
                 </button>
                 <button
                   onClick={handleAddAccount}
-                  disabled={!roleArn || loading}
+                  disabled={loading}
                   className="px-8 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold transition-colors duration-200 flex items-center"
                 >
                   {loading ? (
                     <>
                       <LoaderIcon className="w-4 h-4 mr-2 animate-spin" />
-                      Connecting...
+                      Waiting for Registration...
                     </>
                   ) : (
-                    'Connect & Detect Organization'
+                    'Check Registration & Continue'
                   )}
                 </button>
               </div>

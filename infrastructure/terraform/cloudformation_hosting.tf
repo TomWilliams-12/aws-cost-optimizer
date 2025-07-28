@@ -84,6 +84,23 @@ resource "aws_s3_object" "org_role_template" {
   }
 }
 
+# Upload the Complete CloudFormation template (Role + Lambda)
+resource "aws_s3_object" "complete_template" {
+  bucket = aws_s3_bucket.cloudformation_templates.id
+  key    = "v1/aws-cost-optimizer-complete.yaml"
+  source = "${path.module}/../cloudformation/aws-cost-optimizer-complete.yaml"
+  etag   = filemd5("${path.module}/../cloudformation/aws-cost-optimizer-complete.yaml")
+
+  content_type = "text/yaml"
+  
+  tags = {
+    Public      = "true"  # This tag allows public access via bucket policy
+    Version     = "1.0"
+    Environment = var.stage
+    Type        = "Complete"
+  }
+}
+
 # Create a JSON metadata file for versioning
 resource "aws_s3_object" "template_metadata" {
   bucket = aws_s3_bucket.cloudformation_templates.id
@@ -147,6 +164,50 @@ resource "aws_s3_object" "template_metadata" {
           }
         }
       }
+      "aws-cost-optimizer-complete" = {
+        latest_version = "v1"
+        versions = {
+          "v1" = {
+            file = "v1/aws-cost-optimizer-complete.yaml"
+            description = "Complete setup with IAM role and self-registration Lambda"
+            created_date = "2025-07-28"
+            parameters = {
+              ExternalId = {
+                type = "String"
+                description = "Unique external ID for secure role assumption"
+                required = true
+              }
+              TrustedAccountId = {
+                type = "String"
+                description = "AWS Account ID of the Cost Optimizer service"
+                required = true
+              }
+              ApiEndpoint = {
+                type = "String"
+                description = "AWS Cost Optimizer API endpoint"
+                required = true
+              }
+              OrganizationId = {
+                type = "String"
+                description = "AWS Organization ID (optional)"
+                required = false
+              }
+              IsManagementAccount = {
+                type = "String"
+                description = "Is this the organization management account?"
+                required = false
+              }
+            }
+            outputs = [
+              "RoleArn",
+              "ExternalId",
+              "LambdaArn",
+              "AccountId",
+              "SetupStatus"
+            ]
+          }
+        }
+      }
     }
     last_updated = "2025-07-26T20:00:00Z"
   })
@@ -166,6 +227,7 @@ output "cloudformation_template_urls" {
   value = {
     individual_account = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-role.yaml"
     organization       = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-organization-role.yaml"
+    complete           = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-complete.yaml"
     bucket_name       = aws_s3_bucket.cloudformation_templates.id
   }
 }

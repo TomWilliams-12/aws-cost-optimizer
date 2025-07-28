@@ -1,0 +1,409 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cost Optimizer Complete Setup - IAM Role + Self-Registration Lambda'
+
+Parameters:
+  ExternalId:
+    Type: String
+    Description: 'External ID for cross-account role access'
+    MinLength: 6
+    MaxLength: 128
+    NoEcho: false
+  
+  TrustedAccountId:
+    Type: String
+    Description: 'AWS Account ID of the Cost Optimizer service'
+    Default: '504264909935'
+    AllowedPattern: '[0-9]{12}'
+  
+  ApiEndpoint:
+    Type: String
+    Description: 'AWS Cost Optimizer API endpoint'
+    Default: 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
+  
+  OrganizationId:
+    Type: String
+    Description: 'AWS Organization ID (leave empty for member accounts)'
+    Default: ''
+  
+  IsManagementAccount:
+    Type: String
+    Description: 'Is this the organization management account?'
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  HeartbeatSchedule:
+    Type: String
+    Description: 'Schedule for Lambda heartbeat (CloudWatch Events rate expression)'
+    Default: 'rate(1 hour)'
+
+Resources:
+  # IAM Role for Cost Optimizer access
+  CostOptimizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !If
+        - IsManagementAccountCondition
+        - 'OrganizationCostOptimizerRole'
+        - 'AWSCostOptimizerRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${TrustedAccountId}:root'
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref ExternalId
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/ReadOnlyAccess'
+      Policies:
+        - !If
+          - IsManagementAccountCondition
+          - PolicyName: 'OrganizationManagement'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - 'organizations:DescribeOrganization'
+                    - 'organizations:ListAccounts'
+                    - 'organizations:ListOrganizationalUnitsForParent'
+                    - 'organizations:ListRoots'
+                    - 'organizations:ListChildren'
+                    - 'organizations:DescribeOrganizationalUnit'
+                    - 'organizations:DescribeAccount'
+                    - 'organizations:ListAWSServiceAccessForOrganization'
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - 'cloudformation:CreateStackSet'
+                    - 'cloudformation:UpdateStackSet'
+                    - 'cloudformation:DeleteStackSet'
+                    - 'cloudformation:DescribeStackSet'
+                    - 'cloudformation:ListStackSets'
+                    - 'cloudformation:CreateStackInstances'
+                    - 'cloudformation:UpdateStackInstances'
+                    - 'cloudformation:DeleteStackInstances'
+                    - 'cloudformation:ListStackInstances'
+                    - 'cloudformation:DescribeStackSetOperation'
+                    - 'cloudformation:ListStackSetOperations'
+                    - 'cloudformation:StopStackSetOperation'
+                  Resource: '*'
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: 'Purpose'
+          Value: 'AWS Cost Optimizer Access'
+        - Key: 'Service'
+          Value: 'CostOptimizer'
+
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: 'RegistrationLambdaPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:GetCallerIdentity'
+                Resource: '*'
+              - !If
+                - IsManagementAccountCondition
+                - Effect: Allow
+                  Action:
+                    - 'organizations:DescribeOrganization'
+                  Resource: '*'
+                - !Ref AWS::NoValue
+      Tags:
+        - Key: 'Purpose'
+          Value: 'AWS Cost Optimizer Registration Lambda'
+
+  # Lambda function for self-registration
+  RegistrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'aws-cost-optimizer-registration'
+      Description: 'Self-registration for AWS Cost Optimizer'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 128
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          API_ENDPOINT: !Ref ApiEndpoint
+          EXTERNAL_ID: !Ref ExternalId
+          ROLE_ARN: !GetAtt CostOptimizerRole.Arn
+          ORGANIZATION_ID: !Ref OrganizationId
+          IS_MANAGEMENT_ACCOUNT: !Ref IsManagementAccount
+      Code:
+        ZipFile: |
+          const https = require('https');
+          const { STSClient, GetCallerIdentityCommand } = require('@aws-sdk/client-sts');
+          const { OrganizationsClient, DescribeOrganizationCommand } = require('@aws-sdk/client-organizations');
+          
+          const stsClient = new STSClient({});
+          const orgsClient = new OrganizationsClient({});
+          
+          // CloudFormation custom resource response function
+          const sendResponse = async (event, context, responseStatus, responseData) => {
+            const responseBody = JSON.stringify({
+              Status: responseStatus,
+              Reason: `See CloudWatch Log Stream: ${context.logStreamName}`,
+              PhysicalResourceId: context.logStreamName,
+              StackId: event.StackId,
+              RequestId: event.RequestId,
+              LogicalResourceId: event.LogicalResourceId,
+              Data: responseData
+            });
+            
+            const parsedUrl = new URL(event.ResponseURL);
+            const options = {
+              hostname: parsedUrl.hostname,
+              port: 443,
+              path: parsedUrl.pathname + parsedUrl.search,
+              method: 'PUT',
+              headers: {
+                'content-type': '',
+                'content-length': responseBody.length
+              }
+            };
+            
+            return new Promise((resolve, reject) => {
+              const request = https.request(options, (response) => {
+                console.log(`CloudFormation Response Status: ${response.statusCode}`);
+                resolve();
+              });
+              
+              request.on('error', (error) => {
+                console.error('Error sending response to CloudFormation:', error);
+                reject(error);
+              });
+              
+              request.write(responseBody);
+              request.end();
+            });
+          };
+          
+          exports.handler = async (event, context) => {
+            console.log('Registration Lambda triggered:', JSON.stringify(event));
+            
+            // Handle CloudFormation custom resource events
+            if (event.RequestType) {
+              if (event.RequestType === 'Delete') {
+                // Nothing to do on delete, just send success
+                await sendResponse(event, context, 'SUCCESS', {});
+                return;
+              }
+              
+              try {
+                // Only proceed with registration for Create and Update
+                // Get account information
+                const identity = await stsClient.send(new GetCallerIdentityCommand({}));
+                const accountId = identity.Account;
+                
+                let organizationId = process.env.ORGANIZATION_ID;
+                let accountName = `AWS Account ${accountId}`;
+                
+                // For management accounts, get organization details
+                if (process.env.IS_MANAGEMENT_ACCOUNT === 'true') {
+                  try {
+                    const org = await orgsClient.send(new DescribeOrganizationCommand({}));
+                    organizationId = org.Organization?.Id || organizationId;
+                    accountName = 'AWS Organization Management Account';
+                  } catch (err) {
+                    console.warn('Could not get organization info:', err);
+                  }
+                }
+                
+                // Prepare registration data
+                const data = JSON.stringify({
+                  accountId,
+                  accountName,
+                  region: process.env.AWS_REGION,
+                  roleArn: process.env.ROLE_ARN,
+                  externalId: process.env.EXTERNAL_ID,
+                  organizationId,
+                  isManagementAccount: process.env.IS_MANAGEMENT_ACCOUNT === 'true',
+                  registrationType: 'initial'
+                });
+                
+                // Parse API endpoint
+                const url = new URL(process.env.API_ENDPOINT + '/accounts/register');
+                
+                // Make HTTPS request
+                await new Promise((resolve, reject) => {
+                  const req = https.request({
+                    hostname: url.hostname,
+                    path: url.pathname,
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Content-Length': data.length,
+                      'x-registration-token': process.env.EXTERNAL_ID
+                    }
+                  }, (res) => {
+                    let body = '';
+                    res.on('data', (chunk) => body += chunk);
+                    res.on('end', () => {
+                      if (res.statusCode >= 200 && res.statusCode < 300) {
+                        console.log('Registration successful:', body);
+                        resolve();
+                      } else {
+                        console.error('Registration failed:', res.statusCode, body);
+                        reject(new Error(`Registration failed: ${res.statusCode}`));
+                      }
+                    });
+                  });
+                  
+                  req.on('error', (e) => {
+                    console.error('Request error:', e);
+                    reject(e);
+                  });
+                  
+                  req.write(data);
+                  req.end();
+                });
+                
+                // Send success response to CloudFormation
+                await sendResponse(event, context, 'SUCCESS', { AccountId: accountId });
+                
+              } catch (error) {
+                console.error('Lambda error:', error);
+                await sendResponse(event, context, 'FAILED', {});
+              }
+            } else if (event.source === 'aws.events') {
+              // Handle scheduled heartbeat events
+              try {
+                const identity = await stsClient.send(new GetCallerIdentityCommand({}));
+                const accountId = identity.Account;
+                
+                const data = JSON.stringify({
+                  accountId,
+                  accountName: `AWS Account ${accountId}`,
+                  region: process.env.AWS_REGION,
+                  roleArn: process.env.ROLE_ARN,
+                  externalId: process.env.EXTERNAL_ID,
+                  organizationId: process.env.ORGANIZATION_ID,
+                  isManagementAccount: process.env.IS_MANAGEMENT_ACCOUNT === 'true',
+                  registrationType: 'heartbeat'
+                });
+                
+                const url = new URL(process.env.API_ENDPOINT + '/accounts/register');
+                
+                await new Promise((resolve, reject) => {
+                  const req = https.request({
+                    hostname: url.hostname,
+                    path: url.pathname,
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Content-Length': data.length,
+                      'x-registration-token': process.env.EXTERNAL_ID
+                    }
+                  }, (res) => {
+                    let body = '';
+                    res.on('data', (chunk) => body += chunk);
+                    res.on('end', () => {
+                      if (res.statusCode >= 200 && res.statusCode < 300) {
+                        console.log('Heartbeat successful:', body);
+                        resolve();
+                      } else {
+                        console.error('Heartbeat failed:', res.statusCode, body);
+                        reject(new Error(`Heartbeat failed: ${res.statusCode}`));
+                      }
+                    });
+                  });
+                  
+                  req.on('error', (e) => {
+                    console.error('Request error:', e);
+                    reject(e);
+                  });
+                  
+                  req.write(data);
+                  req.end();
+                });
+                
+              } catch (error) {
+                console.error('Heartbeat error:', error);
+                // For scheduled events, we don't need to return anything special
+              }
+            }
+          };
+      Tags:
+        - Key: 'Purpose'
+          Value: 'AWS Cost Optimizer Registration'
+
+  # EventBridge rule for periodic heartbeat
+  HeartbeatRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: 'aws-cost-optimizer-heartbeat'
+      Description: 'Periodic heartbeat for AWS Cost Optimizer'
+      ScheduleExpression: !Ref HeartbeatSchedule
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RegistrationLambda.Arn
+          Id: '1'
+
+  # Permission for EventBridge to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RegistrationLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt HeartbeatRule.Arn
+
+  # Custom resource to trigger initial registration
+  InitialRegistration:
+    Type: Custom::InitialRegistration
+    Properties:
+      ServiceToken: !GetAtt RegistrationLambda.Arn
+      Trigger: !Ref AWS::StackId
+
+Conditions:
+  IsManagementAccountCondition: !Equals [!Ref IsManagementAccount, 'true']
+
+Outputs:
+  RoleArn:
+    Description: 'ARN of the created IAM role'
+    Value: !GetAtt CostOptimizerRole.Arn
+  
+  ExternalId:
+    Description: 'External ID for assuming the role'
+    Value: !Ref ExternalId
+  
+  LambdaArn:
+    Description: 'ARN of the registration Lambda'
+    Value: !GetAtt RegistrationLambda.Arn
+  
+  AccountId:
+    Description: 'AWS Account ID'
+    Value: !Ref AWS::AccountId
+  
+  SetupStatus:
+    Description: 'Setup completion status'
+    Value: !Sub |
+      ✅ AWS Cost Optimizer setup complete!
+      
+      Account ${AWS::AccountId} has been configured with:
+      - IAM Role for read-only access
+      - Self-registration Lambda function
+      - Periodic heartbeat every hour
+      
+      The account will automatically register with AWS Cost Optimizer.

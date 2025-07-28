@@ -58,12 +58,13 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
         { region: 'ap-northeast-1', regionName: 'Asia Pacific (Tokyo)' }
       ]
 
-      const templateUrl = 'https://aws-cost-optimizer-dev-cloudformation-templates.s3.eu-west-2.amazonaws.com/v1/aws-cost-optimizer-role.yaml'
+      // Use the new complete template with Lambda
+      const templateUrl = 'https://aws-cost-optimizer-dev-cloudformation-templates.s3.eu-west-2.amazonaws.com/v1/aws-cost-optimizer-complete.yaml'
       
       const urls = regions.map(({ region, regionName }) => ({
         region,
         regionName,
-        deployUrl: `https://console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/new?templateURL=${encodeURIComponent(templateUrl)}&stackName=AWS-Cost-Optimizer-Role&param_ExternalId=${newExternalId}&param_RoleName=AWSCostOptimizerRole`
+        deployUrl: `https://console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/new?templateURL=${encodeURIComponent(templateUrl)}&stackName=AWS-Cost-Optimizer&param_ExternalId=${newExternalId}&param_TrustedAccountId=504264909935&param_ApiEndpoint=https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev&param_IsManagementAccount=${accountData.isOrganization ? 'true' : 'false'}`
       }))
 
       setDeployUrls(urls)
@@ -156,11 +157,11 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
             <div className="text-center">
               <Cloud className="w-16 h-16 text-blue-600 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Deploy IAM Role to Your AWS Account
+                Deploy AWS Cost Optimizer to Your Account
               </h3>
               <p className="text-gray-600 max-w-2xl mx-auto">
-                We'll deploy a secure, read-only IAM role to your AWS account using CloudFormation. 
-                This gives us permission to analyze your resources and find cost savings.
+                We'll deploy a secure, read-only IAM role and a self-registration Lambda function to your AWS account. 
+                The Lambda automatically registers your account and maintains a secure connection.
               </p>
             </div>
 
@@ -173,7 +174,8 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
                   <ul className="text-green-700 space-y-1">
                     <li>• No write permissions to your infrastructure</li>
                     <li>• Secure cross-account role with external ID</li>
-                    <li>• Limited to cost analysis and optimization only</li>
+                    <li>• Self-registering Lambda for automatic setup</li>
+                    <li>• Hourly heartbeat for connection monitoring</li>
                     <li>• Can be removed at any time</li>
                   </ul>
                 </div>

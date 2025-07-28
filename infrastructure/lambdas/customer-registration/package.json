@@ -1,0 +1,23 @@
+{
+  "name": "aws-cost-optimizer-customer-registration-lambda",
+  "version": "1.0.0",
+  "description": "Self-registration Lambda deployed to customer accounts",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist package customer-registration.zip",
+    "copy-package": "mkdir -p package && cp -r dist/* package/ && cp package.json package/",
+    "install-prod": "cd package && npm install --production --no-package-lock",
+    "zip": "cd package && zip -rq ../customer-registration.zip .",
+    "package": "npm run clean && npm run build && npm run copy-package && npm run install-prod && npm run zip && rm -rf package"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sts": "^3.507.0",
+    "@aws-sdk/client-organizations": "^3.507.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.134",
+    "@types/node": "^20.11.10",
+    "typescript": "^5.3.3"
+  }
+}

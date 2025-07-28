@@ -1313,7 +1313,7 @@ export const handler = async (
       Key: { accountId },
     }))
 
-    if (!accountResult.Item || accountResult.Item.userId !== user.userId) {
+    if (!accountResult.Item || (accountResult.Item.userId !== user.userId && accountResult.Item.userId !== 'SYSTEM')) {
       return createErrorResponse(404, 'Account not found or access denied')
     }
     const account = accountResult.Item

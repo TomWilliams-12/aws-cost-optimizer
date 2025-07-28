@@ -1250,7 +1250,10 @@ export const handler = async (
     console.log('Analysis handler started')
     console.log('HTTP Method:', event.httpMethod || event.requestContext?.http?.method)
     console.log('Request path:', event.path || event.rawPath || event.requestContext?.http?.path)
-    console.log('Full event structure:', JSON.stringify(event, null, 2))
+    console.log('Path parameters:', event.pathParameters)
+    console.log('Request body:', event.body)
+    console.log('Event keys:', Object.keys(event))
+    console.log('Request context:', event.requestContext)
     
     // Authenticate user
     console.log('Starting authentication...')

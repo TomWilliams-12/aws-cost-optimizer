@@ -101,6 +101,23 @@ resource "aws_s3_object" "complete_template" {
   }
 }
 
+# Upload the StackSet CloudFormation template
+resource "aws_s3_object" "stackset_template" {
+  bucket = aws_s3_bucket.cloudformation_templates.id
+  key    = "v1/aws-cost-optimizer-stackset.yaml"
+  source = "${path.module}/../cloudformation/aws-cost-optimizer-stackset.yaml"
+  etag   = filemd5("${path.module}/../cloudformation/aws-cost-optimizer-stackset.yaml")
+
+  content_type = "text/yaml"
+  
+  tags = {
+    Public      = "true"  # This tag allows public access via bucket policy
+    Version     = "1.0"
+    Environment = var.stage
+    Type        = "StackSet"
+  }
+}
+
 # Create a JSON metadata file for versioning
 resource "aws_s3_object" "template_metadata" {
   bucket = aws_s3_bucket.cloudformation_templates.id
@@ -208,6 +225,47 @@ resource "aws_s3_object" "template_metadata" {
           }
         }
       }
+      "aws-cost-optimizer-stackset" = {
+        latest_version = "v1"
+        versions = {
+          "v1" = {
+            file = "v1/aws-cost-optimizer-stackset.yaml"
+            description = "StackSet template for multi-account deployment across AWS Organizations"
+            created_date = "2025-07-28"
+            parameters = {
+              ExternalId = {
+                type = "String"
+                description = "Unique external ID for secure role assumption"
+                required = true
+              }
+              TrustedAccountId = {
+                type = "String"
+                description = "AWS Account ID of the Cost Optimizer service"
+                default = "504264909935"
+                required = false
+              }
+              ApiEndpoint = {
+                type = "String"
+                description = "AWS Cost Optimizer API endpoint"
+                default = "https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev"
+                required = false
+              }
+              HeartbeatSchedule = {
+                type = "String"
+                description = "Schedule for Lambda heartbeat"
+                default = "rate(1 hour)"
+                required = false
+              }
+            }
+            outputs = [
+              "RoleArn",
+              "ExternalId",
+              "AccountId",
+              "SetupStatus"
+            ]
+          }
+        }
+      }
     }
     last_updated = "2025-07-26T20:00:00Z"
   })
@@ -228,6 +286,7 @@ output "cloudformation_template_urls" {
     individual_account = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-role.yaml"
     organization       = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-organization-role.yaml"
     complete           = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-complete.yaml"
+    stackset           = "https://${aws_s3_bucket.cloudformation_templates.bucket_domain_name}/v1/aws-cost-optimizer-stackset.yaml"
     bucket_name       = aws_s3_bucket.cloudformation_templates.id
   }
 }

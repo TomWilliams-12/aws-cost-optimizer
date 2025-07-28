@@ -8,7 +8,7 @@ import { SavingsImpactChart } from '../components/SavingsImpactChart'
 import { SkeletonChart } from '../components/Skeleton'
 import { ErrorDisplay } from '../components/ErrorDisplay'
 import OrganizationManagement from '../components/OrganizationManagement'
-import UnifiedOrganizationOnboarding from '../components/UnifiedOrganizationOnboarding'
+import StackSetOrganizationOnboarding from '../components/StackSetOrganizationOnboarding'
 import { parseApiError, EnhancedError } from '../utils/errorHandling'
 import { ApiClient } from '../utils/retryLogic'
 import { ToastContainer, useToast } from '../components/Toast'
@@ -183,7 +183,7 @@ export default function DashboardPage() {
       
       info('Analysis started', `Scanning ${account.accountName} for cost optimization opportunities...`)
       
-      const data = await apiClient.post('/analysis', { accountId: account.id }, {
+      const data = await apiClient.post('/analysis', { accountId: account.accountId }, {
         retryOptions: {
           maxAttempts: 2,
           delay: 2000
@@ -214,7 +214,7 @@ export default function DashboardPage() {
         )
 
         // If this account is selected, update the analysis result
-        if (selectedAccount?.id === account.id) {
+        if (selectedAccount?.accountId === account.accountId) {
           setAnalysisResult(result)
           setAnalysisDate(new Date().toISOString())
         }
@@ -542,7 +542,7 @@ export default function DashboardPage() {
           <div
             key={account.id}
             className={`bg-white dark:bg-gray-800 rounded-xl border-2 p-6 cursor-pointer transition-all duration-200 hover:shadow-lg dark:hover:shadow-gray-900/20 ${
-              selectedAccount?.id === account.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              selectedAccount?.accountId === account.accountId ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
             }`}
             onClick={() => setSelectedAccount(account)}
           >
@@ -600,17 +600,17 @@ export default function DashboardPage() {
                   if (account.isOrganization) {
                     runAnalysisForAccount(account)
                   } else {
-                    handleAnalyze(account.id)
+                    handleAnalyze(account.accountId)
                   }
                 }}
-                disabled={analyzingAccountId === account.id || loadingAnalysis[account.accountId]}
+                disabled={analyzingAccountId === account.accountId || loadingAnalysis[account.accountId]}
                 className={`flex-1 inline-flex items-center justify-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  analyzingAccountId === account.id || loadingAnalysis[account.accountId]
+                  analyzingAccountId === account.accountId || loadingAnalysis[account.accountId]
                     ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                {analyzingAccountId === account.id || loadingAnalysis[account.accountId] ? (
+                {analyzingAccountId === account.accountId || loadingAnalysis[account.accountId] ? (
                   <>
                     <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-400 mr-1"></div>
                     Analyzing
@@ -748,11 +748,11 @@ export default function DashboardPage() {
         </div>
         {selectedAccount && (
           <button
-            onClick={() => handleAnalyze(selectedAccount.id)}
-            disabled={analyzingAccountId === selectedAccount.id}
+            onClick={() => handleAnalyze(selectedAccount.accountId)}
+            disabled={analyzingAccountId === selectedAccount.accountId}
             className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
-            {analyzingAccountId === selectedAccount.id ? (
+            {analyzingAccountId === selectedAccount.accountId ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                 Analyzing...
@@ -839,7 +839,7 @@ export default function DashboardPage() {
           <p className="text-gray-600 mb-6">Run an analysis on one of your connected accounts to see optimization opportunities</p>
           {selectedAccount && (
             <button
-              onClick={() => handleAnalyze(selectedAccount.id)}
+              onClick={() => handleAnalyze(selectedAccount.accountId)}
               className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
               <SearchIcon className="mr-2" size={16} />
@@ -1074,7 +1074,7 @@ export default function DashboardPage() {
         isLoading={isAddingAccount}
       />
 
-      <UnifiedOrganizationOnboarding
+      <StackSetOrganizationOnboarding
         isOpen={showUnifiedOrgOnboarding}
         onClose={() => setShowUnifiedOrgOnboarding(false)}
         onComplete={async () => {

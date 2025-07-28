@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Account } from '../types'
 import { CloudFormationOnboarding } from '../components/CloudFormationOnboarding'
+import DeleteConfirmationModal from '../components/DeleteConfirmationModal'
 import { CostBreakdownChart } from '../components/CostBreakdownChart'
 import { SavingsImpactChart } from '../components/SavingsImpactChart'
 import { SkeletonChart } from '../components/Skeleton'
@@ -40,7 +41,8 @@ import {
   ClipboardDocumentCheckIcon,
   BuildingIcon,
   PlayIcon,
-  LoaderIcon
+  LoaderIcon,
+  TrashIcon
 } from '../components/Icons'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
@@ -80,6 +82,8 @@ export default function DashboardPage() {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [organizationView, setOrganizationView] = useState(false)
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; account: Account | null }>({ isOpen: false, account: null })
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false)
   const { user, token, logout } = useAuth()
   const { toasts, removeToast, success, error: showError, info } = useToast()
 
@@ -284,6 +288,7 @@ export default function DashboardPage() {
   const handleDeleteAccount = async (accountId: string) => {
     if (!token) return
 
+    setIsDeletingAccount(true)
     try {
       setError(null)
       const response = await fetch(`${API_URL}/accounts/${accountId}`, {
@@ -314,10 +319,13 @@ export default function DashboardPage() {
       }
 
       success('Account deleted', 'The AWS account has been removed successfully.')
+      setDeleteModal({ isOpen: false, account: null })
     } catch (err: any) {
       const enhancedError = parseApiError(err, err.response)
       setError(enhancedError)
       showError('Delete failed', err.message)
+    } finally {
+      setIsDeletingAccount(false)
     }
   }
 
@@ -625,12 +633,11 @@ export default function DashboardPage() {
               <button 
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (confirm(`Are you sure you want to delete the account "${account.accountName}"? This action cannot be undone.`)) {
-                    handleDeleteAccount(account.id)
-                  }
+                  setDeleteModal({ isOpen: true, account })
                 }}
-                className="px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                className="inline-flex items-center px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
               >
+                <TrashIcon className="mr-1" size={12} />
                 Delete
               </button>
             </div>
@@ -1085,6 +1092,21 @@ export default function DashboardPage() {
           setCurrentView('accounts')
           success('Organization connected!', 'You can now manage your AWS Organization')
         }}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmationModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => setDeleteModal({ isOpen: false, account: null })}
+        onConfirm={() => {
+          if (deleteModal.account) {
+            handleDeleteAccount(deleteModal.account.id)
+          }
+        }}
+        title="Delete AWS Account"
+        message="Are you sure you want to remove this AWS account from Cost Optimizer? This action cannot be undone."
+        itemName={deleteModal.account?.accountName}
+        isDeleting={isDeletingAccount}
       />
 
       {/* Toast Container */}

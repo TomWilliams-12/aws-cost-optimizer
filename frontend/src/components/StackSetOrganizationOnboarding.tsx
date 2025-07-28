@@ -68,19 +68,30 @@ export default function StackSetOrganizationOnboarding({ isOpen, onClose, onComp
 
       if (response.ok) {
         const data = await response.json()
-        const selfRegistered = data.accounts.filter((acc: any) => 
+        console.log('Accounts API response:', data)
+        
+        // Handle both possible response formats
+        const accounts = Array.isArray(data) ? data : (data.accounts || [])
+        console.log('Parsed accounts:', accounts)
+        console.log('Looking for externalId:', externalId)
+        
+        const selfRegistered = accounts.filter((acc: any) => 
           acc.registrationType === 'self-registered' &&
           acc.externalId === externalId
         )
+        console.log('Self-registered accounts found:', selfRegistered.length)
         setRegisteredAccounts(selfRegistered)
         
         // If we have registered accounts and they belong to an organization, we're done
         if (selfRegistered.length > 0) {
           const orgAccounts = selfRegistered.filter((acc: any) => acc.organizationId)
           if (orgAccounts.length > 0) {
+            console.log('Organization accounts detected, completing setup')
             return true
           }
         }
+      } else {
+        console.error('Accounts API error:', response.status, response.statusText)
       }
     } catch (err) {
       console.error('Error checking for registered accounts:', err)

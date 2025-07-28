@@ -33,7 +33,7 @@ variable "project_name" {
 variable "trusted_account_id" {
   description = "AWS account ID that can assume cross-account roles"
   type        = string
-  default     = "123456789012" # Replace with actual account ID
+  default     = "504264909935" # AWS Cost Optimizer application account
 }
 
 locals {

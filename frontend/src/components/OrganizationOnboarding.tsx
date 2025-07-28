@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { useNavigate } from 'react-router-dom'
 import { 
   CheckCircleIcon, 
   ExclamationTriangleIcon, 
@@ -15,6 +16,7 @@ const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
 
 export default function OrganizationOnboarding() {
   const { token } = useAuth()
+  const navigate = useNavigate()
   const [currentStep, setCurrentStep] = useState<'setup' | 'connect' | 'complete'>('setup')
   const [selectedRegion, setSelectedRegion] = useState('us-east-1')
   const [externalId] = useState(() => {
@@ -105,7 +107,12 @@ export default function OrganizationOnboarding() {
         throw new Error(errorMessage)
       }
 
-      setCurrentStep('complete')
+      // Store the account data for the organization detection step
+      const accountData = await response.json()
+      const newAccount = accountData.data?.account
+      
+      // Instead of showing complete, navigate to dashboard with organization setup
+      window.location.href = '/dashboard?view=accounts&setupOrg=true'
 
     } catch (error) {
       console.error('Add organization error:', error)
@@ -383,10 +390,10 @@ export default function OrganizationOnboarding() {
             </div>
 
             <button
-              onClick={() => window.location.href = '/dashboard'}
+              onClick={() => window.location.href = '/dashboard?view=accounts&setupOrg=true'}
               className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors duration-200"
             >
-              Go to Dashboard
+              Continue to Organization Setup
             </button>
           </div>
         )}

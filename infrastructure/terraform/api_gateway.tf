@@ -15,6 +15,7 @@ locals {
     "POST /organizations/detect" = "organizations"
     "POST /organizations/deploy" = "organizations"
     "GET /organizations/{organizationId}/status" = "organizations"
+    "POST /organizations/{organizationId}/sync" = "organizations"
   }
 }
 

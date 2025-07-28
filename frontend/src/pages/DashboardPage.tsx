@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Account } from '../types'
 import { CloudFormationOnboarding } from '../components/CloudFormationOnboarding'
@@ -61,6 +61,7 @@ interface NavigationItem {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<EnhancedError | null>(null)
@@ -117,6 +118,20 @@ export default function DashboardPage() {
     }
     return null
   }
+
+  // Handle URL parameters for organization setup flow
+  useEffect(() => {
+    const view = searchParams.get('view')
+    const setupOrg = searchParams.get('setupOrg')
+    
+    if (view === 'accounts') {
+      setCurrentView('accounts')
+    }
+    
+    if (setupOrg === 'true') {
+      info('Organization Setup', 'Detect your organization structure to deploy across all accounts')
+    }
+  }, [searchParams])
 
   useEffect(() => {
     const fetchAccounts = async () => {
@@ -293,6 +308,12 @@ export default function DashboardPage() {
       }
       setShowAddAccount(false)
       success('Account connected successfully!', `${accountData.accountName} is now ready for analysis`)
+      
+      // If this is an organization management account, switch to accounts view
+      if (accountData.isOrganization) {
+        setCurrentView('accounts')
+        info('Organization Setup', 'Now detect your organization structure to deploy across all accounts')
+      }
     } catch (err: any) {
       const enhancedError = parseApiError(err, err.response)
       setError(enhancedError)

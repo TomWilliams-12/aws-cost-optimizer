@@ -24,7 +24,7 @@ const ANALYSES_TABLE = process.env.ANALYSES_TABLE!
 async function getJwtSecret(): Promise<string> {
   try {
     const result = await secretsManager.send(new GetSecretValueCommand({
-      SecretId: process.env.JWT_SECRET_NAME,
+      SecretId: process.env.APP_SECRETS_ARN || process.env.JWT_SECRET_NAME,
     }));
     const secrets = JSON.parse(result.SecretString!);
     return secrets.jwtSecret;

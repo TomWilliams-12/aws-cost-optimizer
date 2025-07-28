@@ -1,0 +1,23 @@
+{
+  "name": "aws-cost-optimizer-shared-layer",
+  "version": "1.0.0",
+  "description": "Shared utilities layer for AWS Cost Optimizer Lambda functions",
+  "main": "index.js",
+  "scripts": {
+    "clean": "rm -rf nodejs dist layer.zip",
+    "build": "tsc",
+    "copy-dist": "mkdir -p nodejs && cp -r dist/* nodejs/",
+    "copy-deps": "cp package.json nodejs/ && cd nodejs && npm install --production --no-package-lock",
+    "package": "npm run clean && npm run build && npm run copy-dist && npm run copy-deps && zip -rq layer.zip nodejs",
+    "deploy": "npm run package"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.632.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.5.2",
+    "typescript": "^5.5.4"
+  }
+}

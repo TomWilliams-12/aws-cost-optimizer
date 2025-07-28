@@ -1,0 +1,12 @@
+import { APIGatewayProxyResult } from 'aws-lambda';
+export declare function createSuccessResponse<T>(data: T, statusCode?: number, message?: string): APIGatewayProxyResult;
+export declare function createErrorResponse(statusCode: number, error: string, code?: string, details?: any): APIGatewayProxyResult;
+export declare function validateEmail(email: string): boolean;
+export declare function validateAwsAccountId(accountId: string): boolean;
+export declare function validateAwsRegion(region: string): boolean;
+export declare function validateRoleArn(roleArn: string): boolean;
+export declare function sanitizeInput(input: string, maxLength?: number): string;
+export declare function generateTtl(daysFromNow: number): number;
+export declare function parseQueryParameters(event: any): Record<string, string>;
+export declare function parsePathParameters(event: any): Record<string, string>;
+export declare function handleCorsPreflightRequest(): APIGatewayProxyResult;

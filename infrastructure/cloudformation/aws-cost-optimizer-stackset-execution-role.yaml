@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cost Optimizer - StackSet Execution Role for Member Accounts'
+
+Parameters:
+  AdministratorAccountId:
+    Type: String
+    Description: 'AWS Account ID of the organization management account'
+    AllowedPattern: '[0-9]{12}'
+    ConstraintDescription: 'Must be a valid 12-digit AWS Account ID'
+
+Resources:
+  AWSCloudFormationStackSetExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'AWSCloudFormationStackSetExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AdministratorAccountId}:root'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/PowerUserAccess'
+      Tags:
+        - Key: 'Purpose'
+          Value: 'CloudFormation StackSet Execution'
+        - Key: 'Service'
+          Value: 'CostOptimizer'
+
+Outputs:
+  RoleArn:
+    Description: 'ARN of the StackSet Execution Role'
+    Value: !GetAtt AWSCloudFormationStackSetExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ExecutionRoleArn'

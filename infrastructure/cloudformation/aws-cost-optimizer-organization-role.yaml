@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS Cost Optimizer Organization Management Role - Allows detection and StackSet deployment'
+Description: 'AWS Cost Optimizer Organization Setup - Creates all required roles for organization-wide deployment'
 
 Parameters:
   ExternalId:
@@ -15,8 +15,40 @@ Parameters:
     Default: '504264909935'
     AllowedPattern: '[0-9]{12}'
     ConstraintDescription: 'Must be the AWS Cost Optimizer service account ID'
+  
+  CreateStackSetAdminRole:
+    Type: String
+    Description: 'Create the StackSet Administration Role (set to false if it already exists)'
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  CreateStackSetRole: !Equals [!Ref CreateStackSetAdminRole, 'true']
 
 Resources:
+  # StackSet Administration Role (required for StackSet deployment)
+  AWSCloudFormationStackSetAdministrationRole:
+    Type: AWS::IAM::Role
+    Condition: CreateStackSetRole
+    Properties:
+      RoleName: 'AWSCloudFormationStackSetAdministrationRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/PowerUserAccess'
+      Tags:
+        - Key: 'Purpose'
+          Value: 'CloudFormation StackSet Administration'
+        - Key: 'Service'
+          Value: 'CostOptimizer'
+
   OrganizationCostOptimizerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -97,10 +129,21 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-ExternalId'
   
+  StackSetAdminRoleArn:
+    Condition: CreateStackSetRole
+    Description: 'ARN of the StackSet Administration role'
+    Value: !GetAtt AWSCloudFormationStackSetAdministrationRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-StackSetAdminRoleArn'
+  
   SetupInstructions:
     Description: 'Next steps for AWS Cost Optimizer setup'
     Value: !Sub |
+      ✅ Roles created successfully!
+      
       1. Copy the Role ARN: ${OrganizationCostOptimizerRole.Arn}
       2. Copy the External ID: ${ExternalId}
       3. Return to AWS Cost Optimizer and paste these values
       4. Continue with organization detection
+      
+      Note: The StackSet Administration Role has been created automatically (if it didn't exist)

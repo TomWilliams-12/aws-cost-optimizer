@@ -45,14 +45,21 @@
 │   ├── s3.tf              # Frontend hosting and file storage
 │   ├── secrets.tf         # JWT secrets management
 │   └── cloudformation_hosting.tf # Public CloudFormation templates (individual + organization)
-└── lambdas/                # Individual Lambda packages (TypeScript)
-    ├── auth/               # Authentication handler (3.6MB)
-    ├── accounts/           # Account management (3.7MB)
-    ├── analysis/           # Cost analysis engine (9.5MB)
-    ├── reports/            # Report generation (4.7MB)
-    ├── stripe/             # Payment processing (5.2MB)
-    ├── organizations/      # AWS Organizations (4.7MB)
-    └── package.json        # Root package with build scripts
+├── lambdas/                # Individual Lambda packages (TypeScript)
+│   ├── auth/               # Authentication handler (3.6MB)
+│   ├── accounts/           # Account management (3.7MB)
+│   ├── analysis/           # Cost analysis engine (9.5MB)
+│   ├── reports/            # Report generation (4.7MB)
+│   ├── stripe/             # Payment processing (5.2MB)
+│   ├── organizations/      # AWS Organizations (4.7MB)
+│   └── package.json        # Root package with build scripts
+└── layers/                 # Lambda Layers
+    └── shared-utils/       # Shared utilities layer (2.9MB)
+        ├── src/
+        │   ├── auth.ts     # JWT authentication utilities
+        │   ├── response.ts # HTTP response helpers
+        │   └── index.ts    # Layer exports
+        └── layer.zip       # Deployable layer package
 ```
 
 Each Lambda is now individually packaged with only its required dependencies, reducing package sizes by 82-93% compared to the previous monolithic 54MB deployment.
@@ -157,6 +164,7 @@ terraform apply     # Deploy to AWS
 ### Important Development Notes
 - **Terraform Deployments**: The user will ALWAYS run `terraform apply` commands manually. Never run terraform apply automatically - only prepare the changes and inform the user when they need to deploy.
 - **Lambda Architecture**: Each Lambda function is individually packaged with only its required dependencies, significantly reducing cold start times and deployment sizes.
+- **Lambda Package Management**: Let Terraform manage Lambda deployment packages. Do NOT manually create zip files for deployment. Manual zipping causes issues with Terraform change detection. If Lambda code changes aren't being detected by Terraform, use: `terraform apply -replace="aws_lambda_function.main[\"function_name\"]"`
 
 ### Environment Variables
 - `JWT_SECRET_NAME` - AWS Secrets Manager secret name

@@ -208,10 +208,25 @@ resource "aws_iam_role_policy" "lambda_aws_analysis_policy" {
       {
         Effect   = "Allow"
         Action   = ["sts:AssumeRole"]
-        Resource = "arn:aws:iam::*:role/CostOptimizerAnalysisRole"
+        Resource = [
+          "arn:aws:iam::*:role/CostOptimizerAnalysisRole",
+          "arn:aws:iam::*:role/OrganizationCostOptimizerRole"
+        ]
       }
     ]
   })
+}
+
+# Lambda Layer for shared utilities
+resource "aws_lambda_layer_version" "shared_utils" {
+  filename   = "${path.module}/../layers/shared-utils/layer.zip"
+  layer_name = "${local.name_prefix}-shared-utils"
+  
+  compatible_runtimes = ["nodejs22.x"]
+  
+  source_code_hash = filebase64sha256("${path.module}/../layers/shared-utils/layer.zip")
+  
+  description = "Shared utilities for JWT authentication and response formatting"
 }
 
 # Lambda functions using for_each with individual packages
@@ -227,6 +242,8 @@ resource "aws_lambda_function" "main" {
   memory_size      = each.value.memory_size
   source_code_hash = filebase64sha256("${path.module}/../lambdas/${each.key}/${each.key}.zip")
 
+  layers = [aws_lambda_layer_version.shared_utils.arn]
+  
   environment {
     variables = local.lambda_environment_variables
   }

@@ -6,7 +6,8 @@ import {
   DescribeOrganizationCommand,
   ListAccountsCommand,
   ListOrganizationalUnitsForParentCommand,
-  ListRootsCommand
+  ListRootsCommand,
+  ListAWSServiceAccessForOrganizationCommand
 } from '@aws-sdk/client-organizations'
 import { 
   CloudFormationClient,
@@ -29,6 +30,7 @@ const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION 
 
 const ORGANIZATIONS_TABLE = process.env.ORGANIZATIONS_TABLE || 'aws-cost-optimizer-organizations'
 const ORG_ACCOUNTS_TABLE = process.env.ORG_ACCOUNTS_TABLE || 'aws-cost-optimizer-org-accounts'
+const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE || 'aws-cost-optimizer-accounts'
 
 interface OrganizationInfo {
   organizationId: string
@@ -52,10 +54,22 @@ interface OrganizationInfo {
 // Get JWT secret from Secrets Manager
 async function getJwtSecret(): Promise<string> {
   const command = new GetSecretValueCommand({
-    SecretId: process.env.JWT_SECRET_NAME || 'aws-cost-optimizer-jwt-secret'
+    SecretId: process.env.APP_SECRETS_ARN || process.env.JWT_SECRET_NAME || 'aws-cost-optimizer-jwt-secret'
   })
   const secret = await secretsClient.send(command)
-  return secret.SecretString || ''
+  
+  if (secret.SecretString) {
+    try {
+      // Try to parse as JSON (format used by auth handler)
+      const secrets = JSON.parse(secret.SecretString)
+      return secrets.jwtSecret
+    } catch {
+      // If not JSON, return as is
+      return secret.SecretString
+    }
+  }
+  
+  throw new Error('JWT secret not found')
 }
 
 // Verify JWT token
@@ -78,6 +92,19 @@ function calculatePricingTier(accountCount: number): { tier: string, monthlyCost
   } else {
     return { tier: 'Enterprise', monthlyCost: 0 } // Custom pricing
   }
+}
+
+// Helper function to get organization root ID
+async function getRootId(orgsClient: OrganizationsClient): Promise<string> {
+  const rootsCommand = new ListRootsCommand({})
+  const rootsResult = await orgsClient.send(rootsCommand)
+  const rootId = rootsResult.Roots?.[0]?.Id
+  
+  if (!rootId) {
+    throw new Error('Could not find organization root')
+  }
+  
+  return rootId
 }
 
 // Detect AWS Organization
@@ -184,17 +211,16 @@ export async function detectOrganization(event: APIGatewayProxyEvent): Promise<A
       })
     }
 
-    // Calculate pricing
+    // Count active accounts
     const totalAccounts = allAccounts.filter(acc => acc.Status === 'ACTIVE').length
-    const { tier, monthlyCost } = calculatePricingTier(totalAccounts)
 
     const organizationInfo: OrganizationInfo = {
       organizationId,
       managementAccountId,
       organizationalUnits,
       totalAccounts,
-      pricingTier: tier,
-      monthlyCost
+      pricingTier: '', // Removed until pricing is finalized
+      monthlyCost: 0   // Removed until pricing is finalized
     }
 
     console.log('Organization detected successfully:', organizationInfo)
@@ -273,11 +299,79 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
     const body = JSON.parse(event.body || '{}')
     const { 
       organizationId, 
-      targetOUs, 
+      deploymentMode, // 'ENTIRE_ORG' or 'SPECIFIC_OUS'
+      targetOUs = [], 
       excludeAccounts = [],
       region = 'us-east-1',
-      roleArn
+      roleArn,
+      externalId: providedExternalId
     } = body
+
+    if (!roleArn || !providedExternalId) {
+      return {
+        statusCode: 400,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+          error: 'Missing required parameters',
+          details: 'roleArn and externalId are required for StackSet deployment'
+        })
+      }
+    }
+
+    // Assume the customer's role to create StackSet in their account
+    console.log('Assuming customer role for StackSet deployment:', roleArn)
+    const stsClient = new STSClient({ region })
+    const assumeRoleCommand = new AssumeRoleCommand({
+      RoleArn: roleArn,
+      RoleSessionName: 'aws-cost-optimizer-stackset-deployment',
+      ExternalId: providedExternalId
+    })
+    
+    const assumeRoleResult = await stsClient.send(assumeRoleCommand)
+    const credentials = assumeRoleResult.Credentials
+
+    if (!credentials) {
+      throw new Error('Failed to assume customer role')
+    }
+
+    // Create CloudFormation client with assumed role credentials
+    const cfnClient = new CloudFormationClient({
+      region,
+      credentials: {
+        accessKeyId: credentials.AccessKeyId || '',
+        secretAccessKey: credentials.SecretAccessKey || '',
+        sessionToken: credentials.SessionToken
+      }
+    })
+
+    // Create Organizations client with assumed role to check trusted access
+    const orgsClient = new OrganizationsClient({
+      region,
+      credentials: {
+        accessKeyId: credentials.AccessKeyId || '',
+        secretAccessKey: credentials.SecretAccessKey || '',
+        sessionToken: credentials.SessionToken
+      }
+    })
+
+    // Check if CloudFormation has trusted access enabled
+    // member.org.stacksets.cloudformation.amazonaws.com is the correct principal for SERVICE_MANAGED
+    let useServiceManaged = false
+    try {
+      const { EnabledServicePrincipals } = await orgsClient.send(
+        new ListAWSServiceAccessForOrganizationCommand({})
+      )
+      useServiceManaged = EnabledServicePrincipals?.some(
+        service => service.ServicePrincipal === 'member.org.stacksets.cloudformation.amazonaws.com'
+      ) || false
+      console.log('CloudFormation trusted access enabled:', useServiceManaged)
+      console.log('Enabled service principals:', EnabledServicePrincipals?.map(s => s.ServicePrincipal))
+    } catch (err) {
+      console.log('Could not check trusted access, defaulting to SELF_MANAGED:', err)
+    }
 
     // Generate external ID for the organization
     const externalId = `org-${organizationId}-${Date.now()}`
@@ -347,60 +441,275 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
       }
     })
 
-    // Create StackSet
-    const createStackSetCommand = new CreateStackSetCommand({
-      StackSetName: stackSetName,
-      TemplateBody: template,
-      Capabilities: ['CAPABILITY_NAMED_IAM'],
-      Description: 'AWS Cost Optimizer organization-wide IAM roles for cost analysis',
-      Parameters: [
-        {
-          ParameterKey: 'ExternalId',
-          ParameterValue: externalId
+    // Validate deployment mode
+    if (!deploymentMode || !['ENTIRE_ORG', 'SPECIFIC_OUS'].includes(deploymentMode)) {
+      return {
+        statusCode: 400,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
         },
-        {
-          ParameterKey: 'TrustedAccountId',
-          ParameterValue: process.env.TRUSTED_ACCOUNT_ID || '123456789012'
-        }
-      ],
-      PermissionModel: 'SERVICE_MANAGED',
-      AutoDeployment: {
-        Enabled: true,
-        RetainStacksOnAccountRemoval: false
+        body: JSON.stringify({
+          error: 'Invalid deployment mode',
+          details: 'Deployment mode must be either ENTIRE_ORG or SPECIFIC_OUS'
+        })
       }
-    })
+    }
 
-    const stackSetResult = await cloudFormationClient.send(createStackSetCommand)
-    console.log('StackSet created:', stackSetResult.StackSetId)
+    // For SPECIFIC_OUS mode, validate that OUs were provided
+    if (deploymentMode === 'SPECIFIC_OUS' && (!targetOUs || targetOUs.length === 0)) {
+      return {
+        statusCode: 400,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+          error: 'Missing target OUs',
+          details: 'When using SPECIFIC_OUS deployment mode, you must specify target organizational units'
+        })
+      }
+    }
 
-    // Create stack instances for target OUs
-    const createInstancesCommand = new CreateStackInstancesCommand({
-      StackSetName: stackSetName,
-      DeploymentTargets: {
-        OrganizationalUnitIds: targetOUs,
-        AccountFilterType: excludeAccounts.length > 0 ? 'DIFFERENCE' : 'NONE',
-        Accounts: excludeAccounts.length > 0 ? excludeAccounts : undefined
-      },
-      Regions: [region],
-      OperationId: randomUUID()
-    })
+    // First, check if StackSet already exists
+    let stackSetExists = false
+    let existingPermissionModel = null
+    try {
+      const describeCommand = new DescribeStackSetCommand({
+        StackSetName: stackSetName,
+        CallAs: useServiceManaged ? 'SELF' : undefined
+      })
+      const existingStackSet = await cfnClient.send(describeCommand)
+      stackSetExists = true
+      existingPermissionModel = existingStackSet.StackSet?.PermissionModel
+      console.log('Existing StackSet found with permission model:', existingPermissionModel)
+      
+      // If the existing StackSet has different permission model, we need to delete it first
+      if (existingPermissionModel && existingPermissionModel !== (useServiceManaged ? 'SERVICE_MANAGED' : 'SELF_MANAGED')) {
+        return {
+          statusCode: 409,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: 'StackSet Permission Model Conflict',
+            details: `Existing StackSet uses ${existingPermissionModel} permissions but you have trusted access enabled for SERVICE_MANAGED permissions.`,
+            suggestion: `Delete the existing StackSet '${stackSetName}' first, then redeploy with SERVICE_MANAGED permissions.`,
+            currentModel: existingPermissionModel,
+            requestedModel: useServiceManaged ? 'SERVICE_MANAGED' : 'SELF_MANAGED'
+          })
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'StackSetNotFoundException') {
+        throw err
+      }
+      console.log('No existing StackSet found, creating new one')
+    }
 
-    const instancesResult = await cloudFormationClient.send(createInstancesCommand)
-    console.log('Stack instances creation initiated:', instancesResult.OperationId)
+    // Create StackSet only if it doesn't exist
+    let stackSetId: string
+    if (!stackSetExists) {
+      const createStackSetCommand = new CreateStackSetCommand({
+        StackSetName: stackSetName,
+        TemplateBody: template,
+        Capabilities: ['CAPABILITY_NAMED_IAM'],
+        Description: 'AWS Cost Optimizer organization-wide IAM roles for cost analysis',
+        Parameters: [
+          {
+            ParameterKey: 'ExternalId',
+            ParameterValue: externalId
+          },
+          {
+            ParameterKey: 'TrustedAccountId',
+            ParameterValue: process.env.TRUSTED_ACCOUNT_ID || '123456789012'
+          }
+        ],
+        PermissionModel: useServiceManaged ? 'SERVICE_MANAGED' : 'SELF_MANAGED',
+        ...(useServiceManaged && {
+          AutoDeployment: {
+            // Enable auto-deployment for ENTIRE_ORG mode
+            Enabled: deploymentMode === 'ENTIRE_ORG',
+            RetainStacksOnAccountRemoval: false
+          },
+          // For SERVICE_MANAGED StackSets, Organizations handles the execution roles
+          CallAs: 'SELF'
+        })
+      })
+
+      const stackSetResult = await cfnClient.send(createStackSetCommand)
+      console.log('StackSet created:', stackSetResult.StackSetId)
+      stackSetId = stackSetResult.StackSetId!
+    } else {
+      // Use existing StackSet
+      stackSetId = `${stackSetName}:existing`
+    }
+
+    // Create stack instances based on deployment mode
+    const operationIds = []
+    
+    if (useServiceManaged) {
+      const rootId = await getRootId(orgsClient)
+      
+      if (deploymentMode === 'ENTIRE_ORG') {
+        // Deploy to entire organization
+        console.log('Deploying to entire organization with auto-deployment enabled')
+        
+        // For entire org deployment, we need to:
+        // 1. Get all OUs in the organization
+        // 2. Deploy to all OUs (SERVICE_MANAGED can't target root directly)
+        
+        const allOUs: string[] = []
+        
+        // Recursively get all OUs in the organization
+        const getAllOUs = async (parentId: string) => {
+          const listOUsCommand = new ListOrganizationalUnitsForParentCommand({
+            ParentId: parentId
+          })
+          const ousResult = await orgsClient.send(listOUsCommand)
+          
+          for (const ou of ousResult.OrganizationalUnits || []) {
+            allOUs.push(ou.Id!)
+            // Recursively get child OUs
+            await getAllOUs(ou.Id!)
+          }
+        }
+        
+        await getAllOUs(rootId)
+        
+        if (allOUs.length === 0) {
+          // No OUs exist - all accounts are in root
+          return {
+            statusCode: 400,
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            },
+            body: JSON.stringify({
+              error: 'No organizational units found',
+              details: 'SERVICE_MANAGED StackSets require at least one organizational unit. All your accounts appear to be directly in the root.',
+              suggestion: 'Create organizational units and move accounts into them, or disable trusted access to use SELF_MANAGED deployment.'
+            })
+          }
+        }
+        
+        console.log(`Found ${allOUs.length} organizational units to deploy to`)
+        
+        // Deploy to all OUs
+        const operationId = randomUUID()
+        operationIds.push(operationId)
+        
+        const createInstancesCommand = new CreateStackInstancesCommand({
+          StackSetName: stackSetName,
+          DeploymentTargets: {
+            OrganizationalUnitIds: allOUs
+          },
+          Regions: [region],
+          OperationId: operationId,
+          CallAs: 'SELF'
+        })
+        
+        const instancesResult = await cfnClient.send(createInstancesCommand)
+        console.log('Organization-wide deployment initiated:', instancesResult.OperationId)
+        
+      } else if (deploymentMode === 'SPECIFIC_OUS') {
+        // Deploy to specific OUs
+        console.log('Deploying to specific organizational units:', targetOUs)
+        
+        // Filter out root if included
+        const validOUs = targetOUs.filter((ou: string) => ou !== rootId)
+        
+        if (validOUs.length === 0) {
+          return {
+            statusCode: 400,
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            },
+            body: JSON.stringify({
+              error: 'No valid organizational units selected',
+              details: 'The root organizational unit cannot be targeted directly with SERVICE_MANAGED permissions.',
+              suggestion: 'Select specific organizational units (not the root) for deployment.'
+            })
+          }
+        }
+        
+        const operationId = randomUUID()
+        operationIds.push(operationId)
+        
+        const createInstancesCommand = new CreateStackInstancesCommand({
+          StackSetName: stackSetName,
+          DeploymentTargets: {
+            OrganizationalUnitIds: validOUs
+          },
+          Regions: [region],
+          OperationId: operationId,
+          CallAs: 'SELF'
+        })
+        
+        const instancesResult = await cfnClient.send(createInstancesCommand)
+        console.log('Specific OUs deployment initiated:', instancesResult.OperationId)
+      }
+      
+    } else {
+      // SELF_MANAGED deployment - fallback when trusted access is not enabled
+      console.log('Using SELF_MANAGED deployment (trusted access not enabled)')
+      
+      // Get all accounts from the frontend
+      const accountIds = body.accounts || []
+      
+      // Filter out excluded accounts
+      const targetAccounts = accountIds.filter((accountId: string) => {
+        return !excludeAccounts.includes(accountId) && 
+               accountId !== '504264909935' // Our application account
+      })
+      
+      if (targetAccounts.length === 0) {
+        return {
+          statusCode: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: 'No accounts to deploy to',
+            details: 'All accounts were filtered out or excluded.'
+          })
+        }
+      }
+      
+      const operationId = randomUUID()
+      operationIds.push(operationId)
+      
+      const createInstancesCommand = new CreateStackInstancesCommand({
+        StackSetName: stackSetName,
+        Accounts: targetAccounts,
+        Regions: [region],
+        OperationId: operationId
+      })
+      
+      const instancesResult = await cfnClient.send(createInstancesCommand)
+      console.log('SELF_MANAGED deployment initiated:', instancesResult.OperationId)
+    }
 
     // Store organization info in DynamoDB
     const organizationRecord = {
       id: randomUUID(),
       organizationId,
       externalId,
-      stackSetId: stackSetResult.StackSetId,
+      stackSetId: stackSetId,
       stackSetName,
-      targetOUs,
+      deploymentMode,
+      targetOUs: deploymentMode === 'SPECIFIC_OUS' ? targetOUs : [],
       excludeAccounts,
       region,
+      roleArn, // Store the role ARN for later status checks
+      managementAccountId: body.managementAccountId,
+      permissionModel: useServiceManaged ? 'SERVICE_MANAGED' : 'SELF_MANAGED',
       userId: user.sub,
       deploymentStatus: 'DEPLOYING',
-      operationId: instancesResult.OperationId,
+      operationIds: operationIds, // Store all operation IDs
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }
@@ -418,20 +727,95 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
       },
       body: JSON.stringify({
         success: true,
-        stackSetId: stackSetResult.StackSetId,
-        operationId: instancesResult.OperationId,
+        stackSetId: stackSetId,
+        operationIds: operationIds,
         externalId,
         deploymentStatus: 'DEPLOYING',
-        message: 'StackSet deployment initiated. Roles will be created across all specified accounts.'
+        deploymentMode,
+        message: deploymentMode === 'ENTIRE_ORG' 
+          ? 'Organization-wide deployment initiated. Roles will be created in all current and future accounts.'
+          : 'StackSet deployment initiated. Roles will be created in selected organizational units.'
       })
     }
 
   } catch (error) {
     console.error('StackSet deployment error:', error)
 
+    // Provide more specific error messages
+    if (error instanceof Error) {
+      // Check if error is about ANY account needing execution role
+      if (error.message.includes('AWSCloudFormationStackSetExecutionRole')) {
+        // Extract account ID from error message if possible
+        const accountMatch = error.message.match(/Account (\d{12})/)
+        const accountId = accountMatch ? accountMatch[1] : 'one or more accounts'
+        
+        return {
+          statusCode: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: 'StackSet Execution Role Missing',
+            details: `Account ${accountId} is missing the AWSCloudFormationStackSetExecutionRole. This role is required in ALL member accounts for StackSets to work.`,
+            suggestion: 'Enable trusted access in AWS Organizations Console → Services → CloudFormation StackSets, OR manually deploy the execution role to each member account.',
+            failedAccount: accountId,
+            helpUrl: 'https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-prereqs.html'
+          })
+        }
+      }
+      
+      if (error.message.includes('AWSCloudFormationStackSetAdministrationRole')) {
+        return {
+          statusCode: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: 'StackSet Administration Role not found',
+            details: 'The AWSCloudFormationStackSetAdministrationRole must be created in your management account before deploying StackSets.',
+            suggestion: 'Please follow the setup guide to create the required role.'
+          })
+        }
+      }
+      
+      if (error.name === 'AlreadyExistsException' || error.message.includes('AlreadyExists')) {
+        return {
+          statusCode: 409,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: 'StackSet already exists',
+            details: 'A StackSet for this organization already exists. You may need to update or delete the existing StackSet.'
+          })
+        }
+      }
+      
+      if (error.name === 'AccessDeniedException' || error.message.includes('AccessDenied')) {
+        return {
+          statusCode: 403,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: 'Access denied',
+            details: 'The role does not have sufficient permissions to create StackSets.',
+            suggestion: 'Ensure the OrganizationCostOptimizerRole has the required CloudFormation permissions.'
+          })
+        }
+      }
+    }
+
     return {
       statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
       body: JSON.stringify({
         error: 'Failed to deploy StackSet',
         details: error instanceof Error ? error.message : 'Unknown error'
@@ -477,19 +861,47 @@ export async function getOrganizationStatus(event: APIGatewayProxyEvent): Promis
       }
     }
 
+    // Need to assume the customer's role to check their StackSet status
+    const stsClient = new STSClient({ region: organization.region || 'us-east-1' })
+    const assumeRoleCommand = new AssumeRoleCommand({
+      RoleArn: organization.roleArn,
+      RoleSessionName: 'aws-cost-optimizer-stackset-status-check',
+      ExternalId: organization.externalId
+    })
+    
+    let cfnClient = cloudFormationClient
+    try {
+      const assumeRoleResult = await stsClient.send(assumeRoleCommand)
+      const credentials = assumeRoleResult.Credentials
+      
+      if (credentials) {
+        cfnClient = new CloudFormationClient({
+          region: organization.region || 'us-east-1',
+          credentials: {
+            accessKeyId: credentials.AccessKeyId || '',
+            secretAccessKey: credentials.SecretAccessKey || '',
+            sessionToken: credentials.SessionToken
+          }
+        })
+      }
+    } catch (assumeError) {
+      console.error('Failed to assume customer role for status check:', assumeError)
+      // Continue with default client if assume role fails
+    }
+
     // Check StackSet deployment status
     const describeStackSetCommand = new DescribeStackSetCommand({
       StackSetName: organization.stackSetName
     })
 
-    const stackSetInfo = await cloudFormationClient.send(describeStackSetCommand)
+    const stackSetInfo = await cfnClient.send(describeStackSetCommand)
 
     // Get stack instances status
     const listInstancesCommand = new ListStackInstancesCommand({
       StackSetName: organization.stackSetName
     })
 
-    const instancesInfo = await cloudFormationClient.send(listInstancesCommand)
+    const instancesInfo = await cfnClient.send(listInstancesCommand)
 
     const deploymentSummary = {
       organizationId,
@@ -530,6 +942,131 @@ export async function getOrganizationStatus(event: APIGatewayProxyEvent): Promis
   }
 }
 
+// Sync organization accounts to main accounts table
+export async function syncOrganizationAccounts(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  console.log('Syncing organization accounts request:', JSON.stringify(event, null, 2))
+
+  try {
+    // Verify authentication
+    const user = await verifyToken(event.headers?.Authorization || event.headers?.authorization || '')
+    
+    const organizationId = event.pathParameters?.organizationId
+
+    if (!organizationId) {
+      return {
+        statusCode: 400,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({ error: 'Organization ID is required' })
+      }
+    }
+
+    // Get organization record
+    const queryCommand = new QueryCommand({
+      TableName: ORGANIZATIONS_TABLE,
+      IndexName: 'organizationId-index',
+      KeyConditionExpression: 'organizationId = :orgId',
+      ExpressionAttributeValues: {
+        ':orgId': organizationId
+      }
+    })
+
+    const result = await docClient.send(queryCommand)
+    const organization = result.Items?.[0]
+
+    if (!organization) {
+      return {
+        statusCode: 404,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({ error: 'Organization not found' })
+      }
+    }
+
+    // Get deployment status first
+    const statusResult = await getOrganizationStatus(event)
+    const statusBody = JSON.parse(statusResult.body)
+    
+    if (statusResult.statusCode !== 200) {
+      return statusResult
+    }
+
+    // Sync successfully deployed accounts to main accounts table
+    const successfulAccounts = statusBody.accounts?.filter((acc: any) => 
+      acc.status === 'CURRENT' || acc.status === 'SUCCEEDED'
+    ) || []
+
+    console.log(`Syncing ${successfulAccounts.length} successful accounts to main accounts table`)
+
+    for (const account of successfulAccounts) {
+      const accountRecord = {
+        accountId: randomUUID(),
+        userId: user.sub,
+        accountName: `Organization Account ${account.accountId}`,
+        awsAccountId: account.accountId,
+        region: account.region || organization.region || 'us-east-1',
+        roleArn: `arn:aws:iam::${account.accountId}:role/AWSCostOptimizerOrganizationRole`,
+        externalId: organization.externalId,
+        organizationId: organizationId,
+        deploymentType: 'ORGANIZATION',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+
+      try {
+        await docClient.send(new PutCommand({
+          TableName: ACCOUNTS_TABLE,
+          Item: accountRecord,
+          ConditionExpression: 'attribute_not_exists(awsAccountId) OR awsAccountId <> :accountId',
+          ExpressionAttributeValues: {
+            ':accountId': account.accountId
+          }
+        }))
+        console.log(`Successfully synced account ${account.accountId}`)
+      } catch (err: any) {
+        if (err.name === 'ConditionalCheckFailedException') {
+          console.log(`Account ${account.accountId} already exists, skipping`)
+        } else {
+          console.error(`Failed to sync account ${account.accountId}:`, err)
+        }
+      }
+    }
+
+    return {
+      statusCode: 200,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
+      body: JSON.stringify({
+        success: true,
+        syncedAccounts: successfulAccounts.length,
+        accounts: successfulAccounts
+      })
+    }
+
+  } catch (error) {
+    console.error('Sync organization accounts error:', error)
+
+    return {
+      statusCode: 500,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
+      body: JSON.stringify({
+        error: 'Failed to sync organization accounts',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+}
+
 // Lambda handler routing
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Organizations handler received event:', JSON.stringify(event, null, 2))
@@ -563,6 +1100,10 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     
     if (path.includes('/organizations/') && path.includes('/status')) {
       return await getOrganizationStatus(event)
+    }
+    
+    if (path.includes('/organizations/') && path.includes('/sync')) {
+      return await syncOrganizationAccounts(event)
     }
 
     return {

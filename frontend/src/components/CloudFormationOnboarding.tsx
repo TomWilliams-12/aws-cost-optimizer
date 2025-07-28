@@ -33,6 +33,7 @@ export function CloudFormationOnboarding({ isOpen, onClose, onSubmit, isLoading 
     isOrganization: false
   })
   const [copied, setCopied] = useState<string | null>(null)
+  const [organizationStep, setOrganizationStep] = useState<'account' | 'detect' | 'deploy' | 'complete'>('account')
 
   // Generate external ID and deploy URLs when component opens
   useEffect(() => {

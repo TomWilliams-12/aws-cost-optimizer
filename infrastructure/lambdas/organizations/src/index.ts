@@ -5,6 +5,7 @@ import {
   OrganizationsClient, 
   DescribeOrganizationCommand,
   ListAccountsCommand,
+  ListAccountsForParentCommand,
   ListOrganizationalUnitsForParentCommand,
   ListRootsCommand,
   ListAWSServiceAccessForOrganizationCommand
@@ -548,6 +549,7 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
 
     // Create stack instances based on deployment mode
     const operationIds = []
+    let rootAccounts: any[] = [] // Declare at function scope
     
     if (useServiceManaged) {
       const rootId = await getRootId(orgsClient)
@@ -578,7 +580,16 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
         
         await getAllOUs(rootId)
         
-        if (allOUs.length === 0) {
+        // Check for accounts directly under root
+        const listAccountsCommand = new ListAccountsForParentCommand({
+          ParentId: rootId
+        })
+        const rootAccountsResult = await orgsClient.send(listAccountsCommand)
+        rootAccounts = (rootAccountsResult.Accounts || []).filter((acc: any) => 
+          acc.Status === 'ACTIVE' && acc.Id !== body.managementAccountId
+        )
+        
+        if (allOUs.length === 0 && rootAccounts.length > 0) {
           // No OUs exist - all accounts are in root
           return {
             statusCode: 400,
@@ -588,30 +599,51 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
             },
             body: JSON.stringify({
               error: 'No organizational units found',
-              details: 'SERVICE_MANAGED StackSets require at least one organizational unit. All your accounts appear to be directly in the root.',
-              suggestion: 'Create organizational units and move accounts into them, or disable trusted access to use SELF_MANAGED deployment.'
+              details: `SERVICE_MANAGED StackSets require organizational units. Found ${rootAccounts.length} accounts directly under root that cannot be targeted.`,
+              suggestion: 'Create organizational units and move accounts into them, or disable trusted access to use SELF_MANAGED deployment.',
+              accountsInRoot: rootAccounts.length
             })
           }
         }
         
+        // Warn if there are accounts under root that won't be included
+        if (rootAccounts.length > 0) {
+          console.warn(`WARNING: ${rootAccounts.length} accounts are directly under root and will NOT be included in the deployment`)
+          console.warn('Accounts under root:', rootAccounts.map(a => `${a.Name} (${a.Id})`).join(', '))
+        }
+        
         console.log(`Found ${allOUs.length} organizational units to deploy to`)
         
-        // Deploy to all OUs
-        const operationId = randomUUID()
-        operationIds.push(operationId)
+        // Deploy to all OUs in batches (AWS has limits on concurrent operations)
+        const ouBatchSize = 10 // AWS recommends not exceeding 10 concurrent operations
+        for (let i = 0; i < allOUs.length; i += ouBatchSize) {
+          const ouBatch = allOUs.slice(i, i + ouBatchSize)
+          const operationId = randomUUID()
+          operationIds.push(operationId)
+          
+          console.log(`Deploying to OUs batch ${i / ouBatchSize + 1}/${Math.ceil(allOUs.length / ouBatchSize)}: ${ouBatch.join(', ')}`)
+          
+          const createInstancesCommand = new CreateStackInstancesCommand({
+            StackSetName: stackSetName,
+            DeploymentTargets: {
+              OrganizationalUnitIds: ouBatch
+            },
+            Regions: [region],
+            OperationId: operationId,
+            CallAs: 'SELF'
+          })
+          
+          const instancesResult = await cfnClient.send(createInstancesCommand)
+          console.log(`Batch ${i / ouBatchSize + 1} deployment initiated:`, instancesResult.OperationId)
+          
+          // Add small delay between batches to avoid throttling
+          if (i + ouBatchSize < allOUs.length) {
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
+        }
+        console.log(`Organization-wide deployment initiated with ${operationIds.length} operations`)
         
-        const createInstancesCommand = new CreateStackInstancesCommand({
-          StackSetName: stackSetName,
-          DeploymentTargets: {
-            OrganizationalUnitIds: allOUs
-          },
-          Regions: [region],
-          OperationId: operationId,
-          CallAs: 'SELF'
-        })
-        
-        const instancesResult = await cfnClient.send(createInstancesCommand)
-        console.log('Organization-wide deployment initiated:', instancesResult.OperationId)
+        // Don't return early - let the function continue to store the organization record
         
       } else if (deploymentMode === 'SPECIFIC_OUS') {
         // Deploy to specific OUs
@@ -635,21 +667,34 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
           }
         }
         
-        const operationId = randomUUID()
-        operationIds.push(operationId)
-        
-        const createInstancesCommand = new CreateStackInstancesCommand({
-          StackSetName: stackSetName,
-          DeploymentTargets: {
-            OrganizationalUnitIds: validOUs
-          },
-          Regions: [region],
-          OperationId: operationId,
-          CallAs: 'SELF'
-        })
-        
-        const instancesResult = await cfnClient.send(createInstancesCommand)
-        console.log('Specific OUs deployment initiated:', instancesResult.OperationId)
+        // Deploy to specific OUs in batches
+        const ouBatchSize = 10
+        for (let i = 0; i < validOUs.length; i += ouBatchSize) {
+          const ouBatch = validOUs.slice(i, i + ouBatchSize)
+          const operationId = randomUUID()
+          operationIds.push(operationId)
+          
+          console.log(`Deploying to specific OUs batch ${i / ouBatchSize + 1}/${Math.ceil(validOUs.length / ouBatchSize)}: ${ouBatch.join(', ')}`)
+          
+          const createInstancesCommand = new CreateStackInstancesCommand({
+            StackSetName: stackSetName,
+            DeploymentTargets: {
+              OrganizationalUnitIds: ouBatch
+            },
+            Regions: [region],
+            OperationId: operationId,
+            CallAs: 'SELF'
+          })
+          
+          const instancesResult = await cfnClient.send(createInstancesCommand)
+          console.log(`Specific OUs batch ${i / ouBatchSize + 1} deployment initiated:`, instancesResult.OperationId)
+          
+          // Add small delay between batches to avoid throttling
+          if (i + ouBatchSize < validOUs.length) {
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
+        }
+        console.log(`Specific OUs deployment initiated with ${operationIds.length} operations`)
       }
       
     } else {
@@ -719,23 +764,36 @@ export async function deployStackSet(event: APIGatewayProxyEvent): Promise<APIGa
       Item: organizationRecord
     }))
 
+    // Build response with warnings if applicable
+    const response: any = {
+      success: true,
+      stackSetId: stackSetId,
+      operationIds: operationIds,
+      externalId,
+      deploymentStatus: 'DEPLOYING',
+      deploymentMode,
+      message: deploymentMode === 'ENTIRE_ORG' 
+        ? 'Organization-wide deployment initiated. Roles will be created in all current and future accounts.'
+        : 'StackSet deployment initiated. Roles will be created in selected organizational units.'
+    }
+    
+    // Add warning about accounts under root if applicable
+    if (deploymentMode === 'ENTIRE_ORG' && rootAccounts.length > 0) {
+      response.warning = `${rootAccounts.length} accounts directly under root were NOT included in deployment`
+      response.excludedAccounts = rootAccounts.map(a => ({
+        id: a.Id,
+        name: a.Name
+      }))
+      response.suggestion = 'Move these accounts into organizational units to include them in future deployments'
+    }
+    
     return {
       statusCode: 200,
       headers: { 
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
       },
-      body: JSON.stringify({
-        success: true,
-        stackSetId: stackSetId,
-        operationIds: operationIds,
-        externalId,
-        deploymentStatus: 'DEPLOYING',
-        deploymentMode,
-        message: deploymentMode === 'ENTIRE_ORG' 
-          ? 'Organization-wide deployment initiated. Roles will be created in all current and future accounts.'
-          : 'StackSet deployment initiated. Roles will be created in selected organizational units.'
-      })
+      body: JSON.stringify(response)
     }
 
   } catch (error) {

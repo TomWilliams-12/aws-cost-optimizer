@@ -228,18 +228,28 @@ terraform apply     # Deploy to AWS
 
 ## Next Steps
 
-### Immediate Issues (July 27, 2025)
+### Immediate Issues (July 28, 2025)
 - 🔴 **Organizations Detection 500 Error** 
-  - API Gateway returning 500, CloudWatch logs now available
-  - Lambda function may not have updated code deployed
-  - Need to run `terraform apply` to update Lambda functions
-- 🏢 **Multi-Organization Architecture**
-  - AWS = 1 organization per account (1:1 relationship)
-  - Customer may manage multiple organizations
-  - Need to decide: separate accounts vs unified dashboard
-- 🔄 **Lambda Deployment** 
-  - ZIP file created but Lambda functions need updating
-  - Run full `terraform apply` to deploy latest code
+  - Lambda functions need deployment with `terraform apply`
+  - Updated code is ready but not yet deployed
+
+### Recent Improvements (July 28, 2025)
+- ✅ **Enhanced StackSet Deployment**
+  - Fixed issue where only first OU was being deployed to
+  - Now properly deploys to ALL selected OUs in batches
+  - Handles AWS API limits with 10 concurrent operations max
+- ✅ **Persistent Organization View**
+  - Organization accounts now show persistent management UI
+  - Can run analysis directly on organization accounts
+  - Shows deployment status and organization info after refresh
+- ✅ **Unified Onboarding Flow**
+  - New `UnifiedOrganizationOnboarding` component
+  - Single wizard that handles:
+    1. CloudFormation deployment to management account
+    2. Automatic organization detection
+    3. StackSet deployment configuration
+    4. Complete setup in one seamless flow
+  - No more multi-step process - everything in one place!
 
 ### Completed in Recent Sessions
 - ✅ **Organization Management UI** - Full StackSet deployment interface

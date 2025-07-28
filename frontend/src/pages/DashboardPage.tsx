@@ -8,6 +8,7 @@ import { SavingsImpactChart } from '../components/SavingsImpactChart'
 import { SkeletonChart } from '../components/Skeleton'
 import { ErrorDisplay } from '../components/ErrorDisplay'
 import OrganizationManagement from '../components/OrganizationManagement'
+import UnifiedOrganizationOnboarding from '../components/UnifiedOrganizationOnboarding'
 import { parseApiError, EnhancedError } from '../utils/errorHandling'
 import { ApiClient } from '../utils/retryLogic'
 import { ToastContainer, useToast } from '../components/Toast'
@@ -37,7 +38,9 @@ import {
   ShieldCheckIcon,
   DocumentCheckIcon,
   ClipboardDocumentCheckIcon,
-  BuildingIcon
+  BuildingIcon,
+  PlayIcon,
+  LoaderIcon
 } from '../components/Icons'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
@@ -66,14 +69,17 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<EnhancedError | null>(null)
   const [showAddAccount, setShowAddAccount] = useState(false)
+  const [showUnifiedOrgOnboarding, setShowUnifiedOrgOnboarding] = useState(false)
   const [isAddingAccount, setIsAddingAccount] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<any>(null)
   const [analyzingAccountId, setAnalyzingAccountId] = useState<string | null>(null)
+  const [loadingAnalysis, setLoadingAnalysis] = useState<Record<string, boolean>>({})
   const [analysisFromCache, setAnalysisFromCache] = useState(false)
   const [analysisDate, setAnalysisDate] = useState<string | null>(null)
   const [currentView, setCurrentView] = useState<ViewMode>('overview')
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [organizationView, setOrganizationView] = useState(false)
   const { user, token, logout } = useAuth()
   const { toasts, removeToast, success, error: showError, info } = useToast()
 
@@ -133,40 +139,94 @@ export default function DashboardPage() {
     }
   }, [searchParams])
 
-  useEffect(() => {
-    const fetchAccounts = async () => {
-      if (!token) {
-        setIsLoading(false)
-        return
-      }
-
-      apiClient.setAuthToken(token)
-
-      try {
-        setError(null)
-        const data = await apiClient.get('/accounts')
-        const fetchedAccounts = data.data?.accounts || []
-        setAccounts(fetchedAccounts)
-        
-        if (fetchedAccounts.length > 0) {
-          const firstAccount = fetchedAccounts[0]
-          setSelectedAccount(firstAccount)
-          const previousAnalysis = await fetchLatestAnalysis(firstAccount.id)
-          if (previousAnalysis) {
-            info('Previous analysis loaded', `Found cached analysis from ${new Date(previousAnalysis.updatedAt || previousAnalysis.createdAt).toLocaleDateString()}`)
-          }
-        }
-      } catch (err: any) {
-        const enhancedError = parseApiError(err, err.response)
-        setError(enhancedError)
-      } finally {
-        setIsLoading(false)
-      }
+  const fetchAccounts = async () => {
+    if (!token) {
+      setIsLoading(false)
+      return
     }
 
+    apiClient.setAuthToken(token)
+
+    try {
+      setError(null)
+      const data = await apiClient.get('/accounts')
+      const fetchedAccounts = data.data?.accounts || []
+      setAccounts(fetchedAccounts)
+      
+      if (fetchedAccounts.length > 0 && !selectedAccount) {
+        const firstAccount = fetchedAccounts[0]
+        setSelectedAccount(firstAccount)
+        const previousAnalysis = await fetchLatestAnalysis(firstAccount.id)
+        if (previousAnalysis) {
+          info('Previous analysis loaded', `Found cached analysis from ${new Date(previousAnalysis.updatedAt || previousAnalysis.createdAt).toLocaleDateString()}`)
+        }
+      }
+    } catch (err: any) {
+      const enhancedError = parseApiError(err, err.response)
+      setError(enhancedError)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
     fetchAccounts()
   }, [token])
 
+
+  const runAnalysisForAccount = async (account: Account) => {
+    if (!token) return
+
+    try {
+      setLoadingAnalysis(prev => ({ ...prev, [account.accountId]: true }))
+      setError(null)
+      
+      info('Analysis started', `Scanning ${account.accountName} for cost optimization opportunities...`)
+      
+      const data = await apiClient.post('/analysis', { accountId: account.id }, {
+        retryOptions: {
+          maxAttempts: 2,
+          delay: 2000
+        }
+      })
+
+      const result = data.data?.result
+      if (result) {
+        const totalSavings = (
+          (result.unattachedVolumes || []).reduce((sum: number, vol: any) => sum + (vol.potentialSavings || 0), 0) +
+          (result.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
+          (result.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
+          (result.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
+          (result.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
+        )
+
+        const totalOpportunities = (
+          (result.ec2Recommendations?.length || 0) +
+          (result.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
+          (result.unusedElasticIPs?.length || 0) +
+          (result.unattachedVolumes?.length || 0) +
+          (result.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)
+        )
+
+        success(
+          `${account.accountName} analysis complete!`,
+          `Found ${totalOpportunities} opportunities with £${totalSavings.toFixed(2)}/month savings`
+        )
+
+        // If this account is selected, update the analysis result
+        if (selectedAccount?.id === account.id) {
+          setAnalysisResult(result)
+          setAnalysisDate(new Date().toISOString())
+        }
+      }
+      
+    } catch (err: any) {
+      const enhancedError = parseApiError(err, err.response)
+      showError(`Analysis failed for ${account.accountName}`, enhancedError.message)
+    } finally {
+      setLoadingAnalysis(prev => ({ ...prev, [account.accountId]: false }))
+    }
+  }
 
   const handleAnalyze = async (accountId: string) => {
     if (!token) return
@@ -301,11 +361,9 @@ export default function DashboardPage() {
       }
 
       const data = await response.json()
-      const newAccount = data.data?.account
-      setAccounts([...accounts, newAccount])
-      if (!selectedAccount) {
-        setSelectedAccount(newAccount)
-      }
+      
+      // Refresh the accounts list to ensure proper state
+      await fetchAccounts()
       setShowAddAccount(false)
       success('Account connected successfully!', `${accountData.accountName} is now ready for analysis`)
       
@@ -462,7 +520,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex space-x-3">
           <button
-            onClick={() => navigate('/organization-onboarding')}
+            onClick={() => setShowUnifiedOrgOnboarding(true)}
             className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-medium rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-200"
           >
             <CloudIcon className="mr-2" size={16} />
@@ -511,28 +569,48 @@ export default function DashboardPage() {
             </div>
             <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
               {account.accountName}
-              {account.isOrganization && (
-                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                  <BuildingIcon className="w-3 h-3 mr-1" />
-                  Organization
-                </span>
-              )}
             </h4>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Account ID: {account.accountId || 'Not configured'}</p>
+            
+            {account.isOrganization && (
+              <div className="mb-4 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <BuildingIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    <span className="text-sm font-medium text-purple-800 dark:text-purple-200">Organization Account</span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedAccount(account)
+                      setOrganizationView(true)
+                    }}
+                    className="text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300"
+                  >
+                    Manage →
+                  </button>
+                </div>
+              </div>
+            )}
+            
             <div className="flex space-x-2">
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  handleAnalyze(account.id)
+                  if (account.isOrganization) {
+                    runAnalysisForAccount(account)
+                  } else {
+                    handleAnalyze(account.id)
+                  }
                 }}
-                disabled={analyzingAccountId === account.id}
+                disabled={analyzingAccountId === account.id || loadingAnalysis[account.accountId]}
                 className={`flex-1 inline-flex items-center justify-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  analyzingAccountId === account.id
+                  analyzingAccountId === account.id || loadingAnalysis[account.accountId]
                     ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                {analyzingAccountId === account.id ? (
+                {analyzingAccountId === account.id || loadingAnalysis[account.accountId] ? (
                   <>
                     <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-400 mr-1"></div>
                     Analyzing
@@ -561,7 +639,7 @@ export default function DashboardPage() {
 
         {/* Add Organization Card */}
         <div
-          onClick={() => navigate('/organization-onboarding')}
+          onClick={() => setShowUnifiedOrgOnboarding(true)}
           className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border-2 border-dashed border-purple-300 dark:border-purple-600 rounded-xl p-6 cursor-pointer hover:border-purple-400 dark:hover:border-purple-500 hover:from-purple-100 hover:to-blue-100 dark:hover:from-purple-900/30 dark:hover:to-blue-900/30 transition-all duration-200"
         >
           <div className="text-center">
@@ -572,7 +650,7 @@ export default function DashboardPage() {
             <p className="text-sm text-purple-600 dark:text-purple-400 font-medium mb-1">Enterprise-Scale Onboarding</p>
             <p className="text-xs text-gray-500 dark:text-gray-400">Deploy across multiple AWS accounts in your organization</p>
             <div className="mt-3 px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 text-xs rounded-full">
-              Preview Feature
+              One-Click Setup
             </div>
           </div>
         </div>
@@ -592,12 +670,48 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Organization Management */}
-      {selectedAccount && selectedAccount.isOrganization && (
-        <div className="mt-8">
-          <OrganizationManagement account={selectedAccount} />
+      {/* Organization Management - Show for any organization account */}
+      {accounts.filter(acc => acc.isOrganization).map(orgAccount => (
+        <div key={orgAccount.id} className="mt-8">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="bg-purple-50 dark:bg-purple-900/20 px-6 py-4 border-b border-purple-200 dark:border-purple-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <BuildingIcon className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      {orgAccount.accountName} - Organization Management
+                    </h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Deploy and manage cost optimization across your entire organization
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => runAnalysisForAccount(orgAccount)}
+                  disabled={loadingAnalysis[orgAccount.accountId]}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium flex items-center disabled:opacity-50"
+                >
+                  {loadingAnalysis[orgAccount.accountId] ? (
+                    <>
+                      <LoaderIcon className="w-4 h-4 mr-2 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <PlayIcon className="w-4 h-4 mr-2" />
+                      Analyze Management Account
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              <OrganizationManagement account={orgAccount} />
+            </div>
+          </div>
         </div>
-      )}
+      ))}
 
       {/* Account Details Panel */}
       {selectedAccount && !selectedAccount.isOrganization && (
@@ -958,6 +1072,19 @@ export default function DashboardPage() {
         onClose={() => setShowAddAccount(false)}
         onSubmit={handleAddAccount}
         isLoading={isAddingAccount}
+      />
+
+      <UnifiedOrganizationOnboarding
+        isOpen={showUnifiedOrgOnboarding}
+        onClose={() => setShowUnifiedOrgOnboarding(false)}
+        onComplete={async () => {
+          setShowUnifiedOrgOnboarding(false)
+          // Refresh accounts to show the new organization
+          await fetchAccounts()
+          // Show the accounts view to see the new organization
+          setCurrentView('accounts')
+          success('Organization connected!', 'You can now manage your AWS Organization')
+        }}
       />
 
       {/* Toast Container */}

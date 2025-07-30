@@ -115,6 +115,13 @@ export class ApiClient {
       }
     }
 
+    console.log('API Request:', {
+      url,
+      method: init.method,
+      headers: init.headers,
+      body: init.body
+    })
+    
     const response = await fetchWithRetry(url, init, {
       ...this.retryOptions,
       ...retryOptions

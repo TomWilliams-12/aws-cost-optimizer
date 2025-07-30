@@ -187,12 +187,14 @@ export default function DashboardPage() {
       
       info('Analysis started', `Scanning ${account.accountName} for cost optimization opportunities...`)
       
+      console.log('Starting analysis for account:', account.accountId, account.accountName)
       const data = await apiClient.post('/analysis', { accountId: account.accountId }, {
         retryOptions: {
           maxAttempts: 2,
           delay: 2000
         }
       })
+      console.log('Analysis response:', data)
 
       const result = data.data?.result
       if (result) {

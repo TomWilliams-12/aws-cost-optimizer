@@ -102,17 +102,41 @@ export default function UnifiedOrganizationOnboarding({ isOpen, onClose, onCompl
         if (response.ok) {
           const data = await response.json()
           const accounts = data.data?.accounts || []
+          console.log('All accounts fetched:', accounts)
           
           // Look for the management account that was just registered
-          const managementAccount = accounts.find((acc: any) => 
-            acc.isOrganization && 
-            acc.region === selectedRegion &&
-            acc.registrationType === 'self-registered'
-          )
+          // Note: self-registered accounts have ID prefixed with 'self-'
+          const managementAccount = accounts.find((acc: any) => {
+            // Check if it's a self-registered account (multiple ways to identify)
+            const isSelfRegistered = acc.registrationType === 'self-registered' || 
+                                   acc.id?.startsWith('self-')
+            
+            // Region should match what we deployed to
+            const isCorrectRegion = acc.region === selectedRegion
+            
+            // Check if it's marked as an organization/management account
+            // The Lambda might set either isOrganization or isManagementAccount
+            const isOrgAccount = acc.isOrganization === true || acc.isManagementAccount === true
+            
+            console.log('Checking account:', {
+              id: acc.id,
+              accountId: acc.accountId,
+              name: acc.accountName,
+              isSelfRegistered,
+              isCorrectRegion,
+              isOrgAccount,
+              registrationType: acc.registrationType,
+              isOrganization: acc.isOrganization,
+              isManagementAccount: acc.isManagementAccount
+            })
+            
+            return isSelfRegistered && isCorrectRegion && isOrgAccount
+          })
           
           if (managementAccount) {
             setConnectedAccount(managementAccount)
             setRoleArn(managementAccount.roleArn) // Set the role ARN from the registered account
+            console.log('Found management account:', managementAccount)
             return true
           }
         }

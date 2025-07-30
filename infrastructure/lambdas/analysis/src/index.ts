@@ -1246,8 +1246,24 @@ export const handler = async (
   event: any,
   context: Context
 ): Promise<APIGatewayProxyResult> => {
+  console.log('Analysis handler started')
+  console.log('Event:', JSON.stringify(event, null, 2))
+  
+  // Quick test - if path contains 'test', return immediately
+  if (event.path?.includes('test') || event.rawPath?.includes('test')) {
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
+      },
+      body: JSON.stringify({ message: 'Lambda is working!', timestamp: new Date().toISOString() })
+    }
+  }
+  
   try {
-    console.log('Analysis handler started')
     console.log('HTTP Method:', event.httpMethod || event.requestContext?.http?.method)
     console.log('Request path:', event.path || event.rawPath || event.requestContext?.http?.path)
     console.log('Path parameters:', event.pathParameters)
@@ -1266,6 +1282,7 @@ export const handler = async (
 
     // Determine HTTP method (API Gateway v2 uses different event structure)
     const httpMethod = event.httpMethod || event.requestContext?.http?.method
+    console.log('Determined HTTP method:', httpMethod)
     
     // Handle GET request - fetch latest analysis
     if (httpMethod === 'GET') {
@@ -1304,19 +1321,34 @@ export const handler = async (
     }
 
     // Handle POST request - run new analysis
-    const { accountId } = JSON.parse(event.body || '{}')
+    console.log('POST request detected, processing analysis request...')
+    
+    let accountId: string
+    try {
+      const body = JSON.parse(event.body || '{}')
+      accountId = body.accountId
+      console.log('Parsed request body, accountId:', accountId)
+    } catch (error) {
+      console.error('Failed to parse request body:', error)
+      return createErrorResponse(400, 'Invalid request body')
+    }
 
     if (!accountId) {
+      console.log('Missing accountId in request body')
       return createErrorResponse(400, 'accountId is required')
     }
 
     // 1. Get account details from DynamoDB
+    console.log(`Fetching account details for accountId: ${accountId}`)
     const accountResult = await dynamo.send(new GetCommand({
       TableName: ACCOUNTS_TABLE,
       Key: { accountId },
     }))
 
+    console.log('Account lookup result:', accountResult.Item ? 'Found' : 'Not found')
+    
     if (!accountResult.Item || (accountResult.Item.userId !== user.userId && accountResult.Item.userId !== 'SYSTEM')) {
+      console.log('Account access denied. Account userId:', accountResult.Item?.userId, 'User userId:', user.userId)
       return createErrorResponse(404, 'Account not found or access denied')
     }
     const account = accountResult.Item

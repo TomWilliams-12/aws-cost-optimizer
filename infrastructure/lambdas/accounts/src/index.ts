@@ -132,6 +132,7 @@ export const list = async (
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
       isOrganization: item.isOrganization || false,
+      isManagementAccount: item.isManagementAccount || false,
       externalId: item.externalId,
       registrationType: item.registrationType,
       lastSeen: item.lastSeen,
@@ -140,7 +141,16 @@ export const list = async (
     return createSuccessResponse({ accounts })
   } catch (error) {
     console.error('List accounts error:', error)
-    return createErrorResponse(500, 'Internal server error')
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace')
+    console.error('Environment variables:', {
+      ACCOUNTS_TABLE,
+      USERS_TABLE,
+      hasJwtSecret: !!process.env.JWT_SECRET_NAME,
+      region: process.env.REGION
+    })
+    
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    return createErrorResponse(500, 'Internal server error', 'LIST_ACCOUNTS_ERROR', errorMessage)
   }
 }
 

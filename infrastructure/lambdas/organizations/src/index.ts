@@ -1071,7 +1071,8 @@ export async function syncOrganizationAccounts(event: APIGatewayProxyEvent): Pro
         externalId: organization.externalId,
         organizationId: organizationId,
         deploymentType: 'ORGANIZATION',
-        status: 'ACTIVE',
+        isOrganization: true,
+        status: 'active',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }

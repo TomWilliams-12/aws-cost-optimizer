@@ -116,6 +116,9 @@ export default function DashboardPage() {
   // Function to fetch latest analysis for an account
   const fetchLatestAnalysis = async (accountId: string) => {
     try {
+      if (token) {
+        apiClient.setAuthToken(token)
+      }
       const data = await apiClient.get(`/analysis/${accountId}`)
       if (data.data?.result && data.data?.cached) {
         setAnalysisResult(data.data.result)
@@ -182,13 +185,14 @@ export default function DashboardPage() {
     if (!token) return
 
     try {
-      setLoadingAnalysis(prev => ({ ...prev, [account.accountId]: true }))
+      setLoadingAnalysis(prev => ({ ...prev, [account.id]: true }))
       setError(null)
       
       info('Analysis started', `Scanning ${account.accountName} for cost optimization opportunities...`)
       
-      console.log('Starting analysis for account:', account.accountId, account.accountName)
-      const data = await apiClient.post('/analysis', { accountId: account.accountId }, {
+      apiClient.setAuthToken(token)
+      console.log('Starting analysis for account:', account.id, account.accountName)
+      const data = await apiClient.post('/analysis', { accountId: account.id }, {
         retryOptions: {
           maxAttempts: 2,
           delay: 2000
@@ -230,22 +234,23 @@ export default function DashboardPage() {
       const enhancedError = parseApiError(err, err.response)
       showError(`Analysis failed for ${account.accountName}`, enhancedError.message)
     } finally {
-      setLoadingAnalysis(prev => ({ ...prev, [account.accountId]: false }))
+      setLoadingAnalysis(prev => ({ ...prev, [account.id]: false }))
     }
   }
 
-  const handleAnalyze = async (accountId: string) => {
+  const handleAnalyze = async (accountUuid: string) => {
     if (!token) return
 
     try {
-      setAnalyzingAccountId(accountId)
+      setAnalyzingAccountId(accountUuid)
       setError(null)
       setAnalysisFromCache(false)
       setAnalysisDate(null)
       
       info('Analysis started', 'Scanning your AWS account for cost optimization opportunities...')
       
-      const data = await apiClient.post('/analysis', { accountId }, {
+      apiClient.setAuthToken(token)
+      const data = await apiClient.post('/analysis', { accountId: accountUuid }, {
         retryOptions: {
           maxAttempts: 2,
           delay: 2000
@@ -610,17 +615,17 @@ export default function DashboardPage() {
                   if (account.isOrganization) {
                     runAnalysisForAccount(account)
                   } else {
-                    handleAnalyze(account.accountId)
+                    handleAnalyze(account.id)
                   }
                 }}
-                disabled={analyzingAccountId === account.accountId || loadingAnalysis[account.accountId]}
+                disabled={analyzingAccountId === account.id || loadingAnalysis[account.id]}
                 className={`flex-1 inline-flex items-center justify-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  analyzingAccountId === account.accountId || loadingAnalysis[account.accountId]
+                  analyzingAccountId === account.id || loadingAnalysis[account.id]
                     ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                {analyzingAccountId === account.accountId || loadingAnalysis[account.accountId] ? (
+                {analyzingAccountId === account.id || loadingAnalysis[account.id] ? (
                   <>
                     <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-400 mr-1"></div>
                     Analyzing

@@ -3,11 +3,13 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb'
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts'
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
-import { EC2Client, DescribeVolumesCommand, DescribeInstancesCommand, DescribeAddressesCommand, Instance } from '@aws-sdk/client-ec2'
+import { EC2Client, DescribeVolumesCommand, DescribeInstancesCommand, DescribeAddressesCommand, Instance, DescribeNatGatewaysCommand, DescribeVpcEndpointsCommand } from '@aws-sdk/client-ec2'
 import { CloudWatchClient, GetMetricDataCommand, GetMetricStatisticsCommand, ListMetricsCommand } from '@aws-sdk/client-cloudwatch'
 import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetBucketLocationCommand, GetBucketLifecycleConfigurationCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import { ElasticLoadBalancingV2Client, DescribeLoadBalancersCommand, DescribeTargetHealthCommand, DescribeTargetGroupsCommand } from '@aws-sdk/client-elastic-load-balancing-v2'
 import { ElasticLoadBalancingClient, DescribeLoadBalancersCommand as DescribeClassicLoadBalancersCommand } from '@aws-sdk/client-elastic-load-balancing'
+import { RDSClient, DescribeDBInstancesCommand, DescribeDBClustersCommand } from '@aws-sdk/client-rds'
+import { ElastiCacheClient, DescribeCacheClustersCommand, DescribeReplicationGroupsCommand } from '@aws-sdk/client-elasticache'
 import { randomUUID } from 'crypto'
 import jwt from 'jsonwebtoken'
 import { createSuccessResponse, createErrorResponse } from './utils/response'
@@ -1192,6 +1194,702 @@ function generateClassicLoadBalancerRecommendation(
   }
 }
 
+// Analyze RDS instances for optimization opportunities
+async function analyzeRDSInstances(rdsClient: RDSClient, cloudWatchClient: CloudWatchClient, region: string) {
+  console.log('Starting RDS analysis...')
+  const rdsFindings: any[] = []
+  
+  try {
+    // Get all RDS instances
+    const { DBInstances } = await rdsClient.send(new DescribeDBInstancesCommand({}))
+    
+    if (!DBInstances || DBInstances.length === 0) {
+      console.log('No RDS instances found')
+      return []
+    }
+    
+    console.log(`Found ${DBInstances.length} RDS instances to analyze`)
+    
+    for (const instance of DBInstances) {
+      if (!instance.DBInstanceIdentifier) continue
+      
+      const instanceInfo: any = {
+        instanceId: instance.DBInstanceIdentifier,
+        instanceClass: instance.DBInstanceClass,
+        engine: instance.Engine,
+        engineVersion: instance.EngineVersion,
+        multiAZ: instance.MultiAZ,
+        storageType: instance.StorageType,
+        allocatedStorage: instance.AllocatedStorage,
+        status: instance.DBInstanceStatus,
+        createdTime: instance.InstanceCreateTime,
+        environment: 'production', // Default, will be updated based on tags/name
+        metrics: {},
+        recommendations: [],
+        monthlyCost: 0,
+        potentialSavings: 0
+      }
+      
+      // Detect environment based on instance name
+      const lowerName = instance.DBInstanceIdentifier.toLowerCase()
+      if (lowerName.includes('dev') || lowerName.includes('development')) {
+        instanceInfo.environment = 'development'
+      } else if (lowerName.includes('test') || lowerName.includes('staging')) {
+        instanceInfo.environment = 'test'
+      }
+      
+      // Estimate monthly cost (simplified - in production, use AWS Pricing API)
+      const instanceSizeMultiplier = {
+        'db.t3.micro': 0.017,
+        'db.t3.small': 0.034,
+        'db.t3.medium': 0.068,
+        'db.t3.large': 0.136,
+        'db.t3.xlarge': 0.272,
+        'db.t3.2xlarge': 0.544,
+        'db.r5.large': 0.24,
+        'db.r5.xlarge': 0.48,
+        'db.r5.2xlarge': 0.96,
+        'db.r5.4xlarge': 1.92,
+        'db.m5.large': 0.171,
+        'db.m5.xlarge': 0.342,
+        'db.m5.2xlarge': 0.684,
+      }[instance.DBInstanceClass || ''] || 0.5
+      
+      instanceInfo.monthlyCost = instanceSizeMultiplier * 730 // hours per month
+      if (instance.MultiAZ) {
+        instanceInfo.monthlyCost *= 2 // Multi-AZ doubles the cost
+      }
+      
+      // Get CloudWatch metrics for the instance
+      try {
+        const endTime = new Date()
+        const startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000) // 7 days
+        
+        // Get database connections
+        const connectionsData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+          Namespace: 'AWS/RDS',
+          MetricName: 'DatabaseConnections',
+          Dimensions: [{ Name: 'DBInstanceIdentifier', Value: instance.DBInstanceIdentifier }],
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: 3600, // 1 hour
+          Statistics: ['Average', 'Maximum']
+        }))
+        
+        const avgConnections = (connectionsData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (connectionsData.Datapoints?.length || 1)
+        const maxConnections = Math.max(...(connectionsData.Datapoints?.map(dp => dp.Maximum || 0) || [0]))
+        
+        instanceInfo.metrics.avgConnections = Math.round(avgConnections)
+        instanceInfo.metrics.maxConnections = Math.round(maxConnections)
+        
+        // Get CPU utilization
+        const cpuData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+          Namespace: 'AWS/RDS',
+          MetricName: 'CPUUtilization',
+          Dimensions: [{ Name: 'DBInstanceIdentifier', Value: instance.DBInstanceIdentifier }],
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: 3600,
+          Statistics: ['Average', 'Maximum']
+        }))
+        
+        const avgCPU = (cpuData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (cpuData.Datapoints?.length || 1)
+        const maxCPU = Math.max(...(cpuData.Datapoints?.map(dp => dp.Maximum || 0) || [0]))
+        
+        instanceInfo.metrics.avgCPU = Math.round(avgCPU)
+        instanceInfo.metrics.maxCPU = Math.round(maxCPU)
+        
+        // Get Read/Write IOPS
+        const readIOPSData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+          Namespace: 'AWS/RDS',
+          MetricName: 'ReadIOPS',
+          Dimensions: [{ Name: 'DBInstanceIdentifier', Value: instance.DBInstanceIdentifier }],
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: 3600,
+          Statistics: ['Average']
+        }))
+        
+        const avgReadIOPS = (readIOPSData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (readIOPSData.Datapoints?.length || 1)
+        instanceInfo.metrics.avgReadIOPS = Math.round(avgReadIOPS)
+        
+        // Analyze and make recommendations
+        
+        // 1. Check if database is idle
+        if (avgConnections < 1 && avgCPU < 5 && avgReadIOPS < 10) {
+          instanceInfo.recommendations.push({
+            type: 'idle_database',
+            severity: 'high',
+            description: 'Database appears to be idle with no connections',
+            action: instanceInfo.environment === 'production' 
+              ? 'Investigate if this database is still needed'
+              : 'Consider deleting or stopping this database',
+            savingsAmount: instanceInfo.monthlyCost,
+            confidence: 0.9
+          })
+          instanceInfo.potentialSavings += instanceInfo.monthlyCost
+        }
+        
+        // 2. Check for oversized instances
+        else if (avgCPU < 20 && maxCPU < 40) {
+          const downsizeRecommendation = {
+            type: 'downsize_instance',
+            severity: 'medium',
+            description: `CPU utilization is low (avg: ${avgCPU}%, max: ${maxCPU}%)`,
+            action: 'Consider downsizing to a smaller instance class',
+            savingsAmount: instanceInfo.monthlyCost * 0.5,
+            confidence: 0.7
+          }
+          instanceInfo.recommendations.push(downsizeRecommendation)
+          instanceInfo.potentialSavings += downsizeRecommendation.savingsAmount
+        }
+        
+        // 3. Check Multi-AZ in non-production
+        if (instance.MultiAZ && instanceInfo.environment !== 'production') {
+          const multiAZRecommendation = {
+            type: 'remove_multi_az',
+            severity: 'medium',
+            description: `Multi-AZ is enabled in ${instanceInfo.environment} environment`,
+            action: 'Consider disabling Multi-AZ for non-production databases',
+            savingsAmount: instanceInfo.monthlyCost * 0.5,
+            confidence: 0.85
+          }
+          instanceInfo.recommendations.push(multiAZRecommendation)
+          instanceInfo.potentialSavings += multiAZRecommendation.savingsAmount
+        }
+        
+        // 4. Suggest auto-stop for dev/test
+        if (instanceInfo.environment !== 'production' && avgConnections > 0) {
+          const autoStopRecommendation = {
+            type: 'implement_auto_stop',
+            severity: 'medium',
+            description: `${instanceInfo.environment} database running 24/7`,
+            action: 'Implement auto-stop schedule for nights and weekends',
+            savingsAmount: instanceInfo.monthlyCost * 0.65, // ~65% savings for nights/weekends
+            confidence: 0.8
+          }
+          instanceInfo.recommendations.push(autoStopRecommendation)
+          instanceInfo.potentialSavings += autoStopRecommendation.savingsAmount
+        }
+        
+      } catch (metricsError) {
+        console.error(`Error fetching metrics for RDS instance ${instance.DBInstanceIdentifier}:`, metricsError)
+        instanceInfo.metricsError = 'Unable to fetch CloudWatch metrics'
+      }
+      
+      if (instanceInfo.recommendations.length > 0) {
+        rdsFindings.push(instanceInfo)
+      }
+    }
+    
+    console.log(`RDS analysis complete. Found ${rdsFindings.length} instances with recommendations`)
+    return rdsFindings
+    
+  } catch (error) {
+    console.error('Error analyzing RDS instances:', error)
+    return []
+  }
+}
+
+// Analyze NAT Gateways for optimization
+async function analyzeNATGateways(ec2Client: EC2Client, cloudWatchClient: CloudWatchClient, region: string) {
+  console.log('Starting NAT Gateway analysis...')
+  const natFindings: any[] = []
+  
+  try {
+    // Get all NAT Gateways
+    const { NatGateways } = await ec2Client.send(new DescribeNatGatewaysCommand({}))
+    
+    if (!NatGateways || NatGateways.length === 0) {
+      console.log('No NAT Gateways found')
+      return []
+    }
+    
+    console.log(`Found ${NatGateways.length} NAT Gateways to analyze`)
+    
+    // Get VPC Endpoints to check for alternatives
+    const { VpcEndpoints } = await ec2Client.send(new DescribeVpcEndpointsCommand({}))
+    const vpcEndpointsByVpc: Record<string, string[]> = {}
+    VpcEndpoints?.forEach(endpoint => {
+      if (endpoint.VpcId) {
+        if (!vpcEndpointsByVpc[endpoint.VpcId]) {
+          vpcEndpointsByVpc[endpoint.VpcId] = []
+        }
+        vpcEndpointsByVpc[endpoint.VpcId].push(endpoint.ServiceName || '')
+      }
+    })
+    
+    for (const natGateway of NatGateways) {
+      if (!natGateway.NatGatewayId || natGateway.State !== 'available') continue
+      
+      const gatewayInfo: any = {
+        natGatewayId: natGateway.NatGatewayId,
+        vpcId: natGateway.VpcId,
+        subnetId: natGateway.SubnetId,
+        state: natGateway.State,
+        createdTime: natGateway.CreateTime,
+        metrics: {},
+        recommendations: [],
+        monthlyCost: 45, // NAT Gateway hourly cost * 730 hours
+        potentialSavings: 0
+      }
+      
+      // Get CloudWatch metrics for the NAT Gateway
+      try {
+        const endTime = new Date()
+        const startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000) // 7 days
+        
+        // Get bytes out to internet
+        const bytesOutData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+          Namespace: 'AWS/EC2',
+          MetricName: 'BytesOutToDestination',
+          Dimensions: [{ Name: 'NatGatewayId', Value: natGateway.NatGatewayId }],
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: 3600,
+          Statistics: ['Sum']
+        }))
+        
+        const totalBytesOut = bytesOutData.Datapoints?.reduce((sum, dp) => sum + (dp.Sum || 0), 0) || 0
+        const avgDailyGB = (totalBytesOut / (7 * 1024 * 1024 * 1024)) // Convert to GB per day
+        gatewayInfo.metrics.avgDailyDataTransferGB = Math.round(avgDailyGB * 10) / 10
+        
+        // Get active connections
+        const connectionsData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+          Namespace: 'AWS/EC2',
+          MetricName: 'ActiveConnectionCount',
+          Dimensions: [{ Name: 'NatGatewayId', Value: natGateway.NatGatewayId }],
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: 3600,
+          Statistics: ['Average', 'Maximum']
+        }))
+        
+        const avgConnections = (connectionsData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (connectionsData.Datapoints?.length || 1)
+        const maxConnections = Math.max(...(connectionsData.Datapoints?.map(dp => dp.Maximum || 0) || [0]))
+        
+        gatewayInfo.metrics.avgConnections = Math.round(avgConnections)
+        gatewayInfo.metrics.maxConnections = Math.round(maxConnections)
+        
+        // Add data transfer costs (simplified - $0.045 per GB)
+        const monthlyDataTransferCost = avgDailyGB * 30 * 0.045
+        gatewayInfo.monthlyCost += monthlyDataTransferCost
+        gatewayInfo.metrics.monthlyDataTransferCost = Math.round(monthlyDataTransferCost)
+        
+        // Analyze and make recommendations
+        
+        // 1. Check if NAT Gateway is idle
+        if (avgConnections < 10 && avgDailyGB < 1) {
+          gatewayInfo.recommendations.push({
+            type: 'idle_nat_gateway',
+            severity: 'high',
+            description: 'NAT Gateway has very low usage',
+            action: 'Consider removing this NAT Gateway if not needed',
+            savingsAmount: gatewayInfo.monthlyCost,
+            confidence: 0.85
+          })
+          gatewayInfo.potentialSavings += gatewayInfo.monthlyCost
+        }
+        
+        // 2. Check for VPC Endpoint opportunities
+        const vpcEndpoints = vpcEndpointsByVpc[natGateway.VpcId || ''] || []
+        const hasS3Endpoint = vpcEndpoints.some(ep => ep.includes('s3'))
+        const hasDynamoEndpoint = vpcEndpoints.some(ep => ep.includes('dynamodb'))
+        
+        if (!hasS3Endpoint) {
+          gatewayInfo.recommendations.push({
+            type: 'add_vpc_endpoint',
+            severity: 'medium',
+            description: 'No S3 VPC Endpoint found',
+            action: 'Add S3 VPC Endpoint to reduce NAT Gateway data transfer costs',
+            savingsAmount: monthlyDataTransferCost * 0.3, // Estimate 30% of traffic is S3
+            confidence: 0.7
+          })
+          gatewayInfo.potentialSavings += monthlyDataTransferCost * 0.3
+        }
+        
+        if (!hasDynamoEndpoint) {
+          gatewayInfo.recommendations.push({
+            type: 'add_vpc_endpoint',
+            severity: 'low',
+            description: 'No DynamoDB VPC Endpoint found',
+            action: 'Add DynamoDB VPC Endpoint to reduce NAT Gateway data transfer costs',
+            savingsAmount: monthlyDataTransferCost * 0.1, // Estimate 10% of traffic
+            confidence: 0.6
+          })
+          gatewayInfo.potentialSavings += monthlyDataTransferCost * 0.1
+        }
+        
+        // 3. Check for multiple NAT Gateways in same AZ (redundancy issue)
+        const allNATsInVPC = NatGateways.filter(n => n.VpcId === natGateway.VpcId && n.State === 'available')
+        if (allNATsInVPC.length > 1) {
+          const natsInSameSubnet = allNATsInVPC.filter(n => n.SubnetId === natGateway.SubnetId)
+          if (natsInSameSubnet.length > 1) {
+            gatewayInfo.recommendations.push({
+              type: 'duplicate_nat_gateway',
+              severity: 'high',
+              description: 'Multiple NAT Gateways found in the same subnet',
+              action: 'Remove duplicate NAT Gateways in the same availability zone',
+              savingsAmount: 45, // Cost of one NAT Gateway
+              confidence: 0.9
+            })
+            gatewayInfo.potentialSavings += 45
+          }
+        }
+        
+      } catch (metricsError) {
+        console.error(`Error fetching metrics for NAT Gateway ${natGateway.NatGatewayId}:`, metricsError)
+        gatewayInfo.metricsError = 'Unable to fetch CloudWatch metrics'
+      }
+      
+      if (gatewayInfo.recommendations.length > 0) {
+        natFindings.push(gatewayInfo)
+      }
+    }
+    
+    console.log(`NAT Gateway analysis complete. Found ${natFindings.length} gateways with recommendations`)
+    return natFindings
+    
+  } catch (error) {
+    console.error('Error analyzing NAT Gateways:', error)
+    return []
+  }
+}
+
+// Analyze ElastiCache clusters for optimization
+async function analyzeElastiCache(elasticacheClient: ElastiCacheClient, cloudWatchClient: CloudWatchClient, region: string) {
+  console.log('Starting ElastiCache analysis...')
+  const cacheFindings: any[] = []
+  
+  try {
+    // Get all cache clusters
+    const { CacheClusters } = await elasticacheClient.send(new DescribeCacheClustersCommand({ ShowCacheNodeInfo: true }))
+    
+    // Get all replication groups (Redis)
+    const { ReplicationGroups } = await elasticacheClient.send(new DescribeReplicationGroupsCommand({}))
+    
+    const totalClusters = (CacheClusters?.length || 0) + (ReplicationGroups?.length || 0)
+    
+    if (totalClusters === 0) {
+      console.log('No ElastiCache clusters found')
+      return []
+    }
+    
+    console.log(`Found ${CacheClusters?.length || 0} cache clusters and ${ReplicationGroups?.length || 0} replication groups to analyze`)
+    
+    // Analyze standalone cache clusters (Memcached)
+    if (CacheClusters) {
+      for (const cluster of CacheClusters) {
+        if (!cluster.CacheClusterId || cluster.CacheClusterStatus !== 'available') continue
+        
+        // Skip if part of a replication group (will be analyzed separately)
+        if (cluster.ReplicationGroupId) continue
+        
+        const clusterInfo: any = {
+          clusterId: cluster.CacheClusterId,
+          engine: cluster.Engine,
+          engineVersion: cluster.EngineVersion,
+          nodeType: cluster.CacheNodeType,
+          numNodes: cluster.NumCacheNodes,
+          createdTime: cluster.CacheClusterCreateTime,
+          metrics: {},
+          recommendations: [],
+          monthlyCost: 0,
+          potentialSavings: 0
+        }
+        
+        // Estimate monthly cost (simplified)
+        const nodeCostMultiplier = {
+          'cache.t3.micro': 0.017,
+          'cache.t3.small': 0.034,
+          'cache.t3.medium': 0.068,
+          'cache.t4g.micro': 0.016,
+          'cache.t4g.small': 0.032,
+          'cache.t4g.medium': 0.065,
+          'cache.m5.large': 0.142,
+          'cache.m5.xlarge': 0.284,
+          'cache.m5.2xlarge': 0.568,
+          'cache.m6g.large': 0.128,
+          'cache.m6g.xlarge': 0.256,
+          'cache.r5.large': 0.182,
+          'cache.r5.xlarge': 0.364,
+        }[cluster.CacheNodeType || ''] || 0.1
+        
+        clusterInfo.monthlyCost = nodeCostMultiplier * 730 * (cluster.NumCacheNodes || 1)
+        
+        // Get CloudWatch metrics
+        try {
+          const endTime = new Date()
+          const startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000) // 7 days
+          
+          // Get CPU utilization
+          const cpuData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+            Namespace: 'AWS/ElastiCache',
+            MetricName: 'CPUUtilization',
+            Dimensions: [{ Name: 'CacheClusterId', Value: cluster.CacheClusterId }],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 3600,
+            Statistics: ['Average', 'Maximum']
+          }))
+          
+          const avgCPU = (cpuData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (cpuData.Datapoints?.length || 1)
+          const maxCPU = Math.max(...(cpuData.Datapoints?.map(dp => dp.Maximum || 0) || [0]))
+          
+          clusterInfo.metrics.avgCPU = Math.round(avgCPU)
+          clusterInfo.metrics.maxCPU = Math.round(maxCPU)
+          
+          // Get cache hits/misses for Memcached
+          if (cluster.Engine === 'memcached') {
+            const hitsData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+              Namespace: 'AWS/ElastiCache',
+              MetricName: 'CacheHits',
+              Dimensions: [{ Name: 'CacheClusterId', Value: cluster.CacheClusterId }],
+              StartTime: startTime,
+              EndTime: endTime,
+              Period: 3600,
+              Statistics: ['Sum']
+            }))
+            
+            const totalHits = hitsData.Datapoints?.reduce((sum, dp) => sum + (dp.Sum || 0), 0) || 0
+            clusterInfo.metrics.totalHits = totalHits
+            
+            const missesData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+              Namespace: 'AWS/ElastiCache',
+              MetricName: 'CacheMisses',
+              Dimensions: [{ Name: 'CacheClusterId', Value: cluster.CacheClusterId }],
+              StartTime: startTime,
+              EndTime: endTime,
+              Period: 3600,
+              Statistics: ['Sum']
+            }))
+            
+            const totalMisses = missesData.Datapoints?.reduce((sum, dp) => sum + (dp.Sum || 0), 0) || 0
+            clusterInfo.metrics.totalMisses = totalMisses
+            clusterInfo.metrics.hitRate = totalHits > 0 ? Math.round((totalHits / (totalHits + totalMisses)) * 100) : 0
+          }
+          
+          // Get network bytes in/out
+          const bytesInData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+            Namespace: 'AWS/ElastiCache',
+            MetricName: 'NetworkBytesIn',
+            Dimensions: [{ Name: 'CacheClusterId', Value: cluster.CacheClusterId }],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 3600,
+            Statistics: ['Sum']
+          }))
+          
+          const totalBytesIn = bytesInData.Datapoints?.reduce((sum, dp) => sum + (dp.Sum || 0), 0) || 0
+          clusterInfo.metrics.avgDailyDataGB = Math.round((totalBytesIn / (7 * 1024 * 1024 * 1024)) * 10) / 10
+          
+          // Analyze and make recommendations
+          
+          // 1. Check if cache is idle
+          if (avgCPU < 5 && totalBytesIn < 1024 * 1024 * 100) { // Less than 100MB in 7 days
+            clusterInfo.recommendations.push({
+              type: 'idle_cache_cluster',
+              severity: 'high',
+              description: 'Cache cluster appears to be idle',
+              action: 'Consider deleting this unused cache cluster',
+              savingsAmount: clusterInfo.monthlyCost,
+              confidence: 0.9
+            })
+            clusterInfo.potentialSavings += clusterInfo.monthlyCost
+          }
+          
+          // 2. Check for oversized instances
+          else if (avgCPU < 20 && maxCPU < 40) {
+            clusterInfo.recommendations.push({
+              type: 'downsize_cache_node',
+              severity: 'medium',
+              description: `CPU utilization is low (avg: ${avgCPU}%, max: ${maxCPU}%)`,
+              action: 'Consider using a smaller node type',
+              savingsAmount: clusterInfo.monthlyCost * 0.5,
+              confidence: 0.7
+            })
+            clusterInfo.potentialSavings += clusterInfo.monthlyCost * 0.5
+          }
+          
+          // 3. Check cache effectiveness (Memcached only)
+          if (cluster.Engine === 'memcached' && clusterInfo.metrics.hitRate < 80 && clusterInfo.metrics.totalHits > 1000) {
+            clusterInfo.recommendations.push({
+              type: 'low_cache_hit_rate',
+              severity: 'medium',
+              description: `Low cache hit rate (${clusterInfo.metrics.hitRate}%)`,
+              action: 'Review caching strategy or consider removing if not effective',
+              savingsAmount: clusterInfo.monthlyCost * 0.5,
+              confidence: 0.6
+            })
+            clusterInfo.potentialSavings += clusterInfo.monthlyCost * 0.5
+          }
+          
+        } catch (metricsError) {
+          console.error(`Error fetching metrics for cache cluster ${cluster.CacheClusterId}:`, metricsError)
+          clusterInfo.metricsError = 'Unable to fetch CloudWatch metrics'
+        }
+        
+        if (clusterInfo.recommendations.length > 0) {
+          cacheFindings.push(clusterInfo)
+        }
+      }
+    }
+    
+    // Analyze Redis replication groups
+    if (ReplicationGroups) {
+      for (const replGroup of ReplicationGroups) {
+        if (!replGroup.ReplicationGroupId || replGroup.Status !== 'available') continue
+        
+        const groupInfo: any = {
+          replicationGroupId: replGroup.ReplicationGroupId,
+          description: replGroup.Description,
+          engine: 'redis',
+          nodeType: replGroup.CacheNodeType,
+          numNodeGroups: replGroup.NodeGroups?.length || 0,
+          automaticFailover: replGroup.AutomaticFailover,
+          multiAZ: replGroup.MultiAZ,
+          metrics: {},
+          recommendations: [],
+          monthlyCost: 0,
+          potentialSavings: 0
+        }
+        
+        // Count total nodes
+        const totalNodes = replGroup.NodeGroups?.reduce((sum, ng) => sum + (ng.NodeGroupMembers?.length || 0), 0) || 0
+        
+        // Estimate monthly cost
+        const nodeCostMultiplier = {
+          'cache.t3.micro': 0.017,
+          'cache.t3.small': 0.034,
+          'cache.t3.medium': 0.068,
+          'cache.t4g.micro': 0.016,
+          'cache.t4g.small': 0.032,
+          'cache.t4g.medium': 0.065,
+          'cache.m5.large': 0.142,
+          'cache.m5.xlarge': 0.284,
+          'cache.m5.2xlarge': 0.568,
+          'cache.m6g.large': 0.128,
+          'cache.m6g.xlarge': 0.256,
+          'cache.r5.large': 0.182,
+          'cache.r5.xlarge': 0.364,
+        }[replGroup.CacheNodeType || ''] || 0.1
+        
+        groupInfo.monthlyCost = nodeCostMultiplier * 730 * totalNodes
+        
+        // Get CloudWatch metrics
+        try {
+          const endTime = new Date()
+          const startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000) // 7 days
+          
+          // Get CPU utilization
+          const cpuData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+            Namespace: 'AWS/ElastiCache',
+            MetricName: 'CPUUtilization',
+            Dimensions: [{ Name: 'ReplicationGroupId', Value: replGroup.ReplicationGroupId }],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 3600,
+            Statistics: ['Average', 'Maximum']
+          }))
+          
+          const avgCPU = (cpuData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (cpuData.Datapoints?.length || 1)
+          const maxCPU = Math.max(...(cpuData.Datapoints?.map(dp => dp.Maximum || 0) || [0]))
+          
+          groupInfo.metrics.avgCPU = Math.round(avgCPU)
+          groupInfo.metrics.maxCPU = Math.round(maxCPU)
+          
+          // Get memory utilization for Redis
+          const memoryData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+            Namespace: 'AWS/ElastiCache',
+            MetricName: 'DatabaseMemoryUsagePercentage',
+            Dimensions: [{ Name: 'ReplicationGroupId', Value: replGroup.ReplicationGroupId }],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 3600,
+            Statistics: ['Average', 'Maximum']
+          }))
+          
+          const avgMemory = (memoryData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (memoryData.Datapoints?.length || 1)
+          const maxMemory = Math.max(...(memoryData.Datapoints?.map(dp => dp.Maximum || 0) || [0]))
+          
+          groupInfo.metrics.avgMemoryUsage = Math.round(avgMemory)
+          groupInfo.metrics.maxMemoryUsage = Math.round(maxMemory)
+          
+          // Get current connections
+          const connectionsData = await cloudWatchClient.send(new GetMetricStatisticsCommand({
+            Namespace: 'AWS/ElastiCache',
+            MetricName: 'CurrConnections',
+            Dimensions: [{ Name: 'ReplicationGroupId', Value: replGroup.ReplicationGroupId }],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 3600,
+            Statistics: ['Average', 'Maximum']
+          }))
+          
+          const avgConnections = (connectionsData.Datapoints?.reduce((sum, dp) => sum + (dp.Average || 0), 0) || 0) / (connectionsData.Datapoints?.length || 1)
+          groupInfo.metrics.avgConnections = Math.round(avgConnections)
+          
+          // Analyze and make recommendations
+          
+          // 1. Check if Redis cluster is idle
+          if (avgCPU < 5 && avgConnections < 5) {
+            groupInfo.recommendations.push({
+              type: 'idle_redis_cluster',
+              severity: 'high',
+              description: 'Redis cluster appears to be idle',
+              action: 'Consider deleting this unused Redis cluster',
+              savingsAmount: groupInfo.monthlyCost,
+              confidence: 0.9
+            })
+            groupInfo.potentialSavings += groupInfo.monthlyCost
+          }
+          
+          // 2. Check for oversized instances
+          else if (avgCPU < 20 && maxCPU < 40 && avgMemory < 50) {
+            groupInfo.recommendations.push({
+              type: 'downsize_redis_nodes',
+              severity: 'medium',
+              description: `Low resource utilization (CPU: ${avgCPU}%, Memory: ${avgMemory}%)`,
+              action: 'Consider using smaller node types',
+              savingsAmount: groupInfo.monthlyCost * 0.5,
+              confidence: 0.7
+            })
+            groupInfo.potentialSavings += groupInfo.monthlyCost * 0.5
+          }
+          
+          // 3. Check Multi-AZ for non-critical workloads
+          if (replGroup.MultiAZ && avgConnections < 100) {
+            groupInfo.recommendations.push({
+              type: 'unnecessary_multi_az',
+              severity: 'low',
+              description: 'Multi-AZ enabled for low-traffic Redis cluster',
+              action: 'Consider disabling Multi-AZ if high availability is not critical',
+              savingsAmount: groupInfo.monthlyCost * 0.3,
+              confidence: 0.5
+            })
+            groupInfo.potentialSavings += groupInfo.monthlyCost * 0.3
+          }
+          
+        } catch (metricsError) {
+          console.error(`Error fetching metrics for replication group ${replGroup.ReplicationGroupId}:`, metricsError)
+          groupInfo.metricsError = 'Unable to fetch CloudWatch metrics'
+        }
+        
+        if (groupInfo.recommendations.length > 0) {
+          cacheFindings.push(groupInfo)
+        }
+      }
+    }
+    
+    console.log(`ElastiCache analysis complete. Found ${cacheFindings.length} clusters with recommendations`)
+    return cacheFindings
+    
+  } catch (error) {
+    console.error('Error analyzing ElastiCache clusters:', error)
+    return []
+  }
+}
+
 // Fetch latest analysis results for an account
 async function getLatestAnalysis(userId: string, accountId: string): Promise<any | null> {
   try {
@@ -1406,6 +2104,24 @@ export const handler = async (
       },
     })
 
+    const rdsClient = new RDSClient({
+      region: account.region,
+      credentials: {
+        accessKeyId: credentials.Credentials!.AccessKeyId!,
+        secretAccessKey: credentials.Credentials!.SecretAccessKey!,
+        sessionToken: credentials.Credentials!.SessionToken!,
+      },
+    })
+
+    const elasticacheClient = new ElastiCacheClient({
+      region: account.region,
+      credentials: {
+        accessKeyId: credentials.Credentials!.AccessKeyId!,
+        secretAccessKey: credentials.Credentials!.SecretAccessKey!,
+        sessionToken: credentials.Credentials!.SessionToken!,
+      },
+    })
+
     // 3. Perform the analysis
     const analysisId = randomUUID()
     const analysisStartTime = new Date().toISOString()
@@ -1453,6 +2169,18 @@ export const handler = async (
     console.log('Analyzing load balancers...')
     const loadBalancerAnalysis = await analyzeLoadBalancers(elbv2Client, elbClassicClient, cloudWatchClient, account.region)
 
+    // Analyze RDS instances
+    console.log('Analyzing RDS instances...')
+    const rdsAnalysis = await analyzeRDSInstances(rdsClient, cloudWatchClient, account.region)
+
+    // Analyze NAT Gateways
+    console.log('Analyzing NAT Gateways...')
+    const natGatewayAnalysis = await analyzeNATGateways(ec2Client, cloudWatchClient, account.region)
+
+    // Analyze ElastiCache clusters
+    console.log('Analyzing ElastiCache clusters...')
+    const elastiCacheAnalysis = await analyzeElastiCache(elasticacheClient, cloudWatchClient, account.region)
+
     // 4. Store the results in DynamoDB
     const analysisResult = {
       unattachedVolumes,
@@ -1460,6 +2188,9 @@ export const handler = async (
       s3Analysis,
       unusedElasticIPs,
       loadBalancerAnalysis,
+      rdsAnalysis,
+      natGatewayAnalysis,
+      elastiCacheAnalysis,
     }
 
     // Remove undefined values to prevent DynamoDB errors

@@ -42,7 +42,8 @@ import {
   BuildingIcon,
   PlayIcon,
   LoaderIcon,
-  TrashIcon
+  TrashIcon,
+  DatabaseIcon
 } from '../components/Icons'
 
 const API_URL = 'https://11opiiigu9.execute-api.eu-west-2.amazonaws.com/dev'
@@ -93,7 +94,10 @@ export default function DashboardPage() {
     (analysisResult.ec2Recommendations || []).reduce((sum: number, rec: any) => sum + (rec.potentialSavings?.monthly || 0), 0) +
     (analysisResult.s3Analysis || []).reduce((sum: number, bucket: any) => sum + (bucket.potentialSavings?.monthly || 0), 0) +
     (analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0) +
-    (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0)
+    (analysisResult.loadBalancerAnalysis || []).reduce((sum: number, lb: any) => sum + (lb.potentialSavings || 0), 0) +
+    (analysisResult.rdsAnalysis || []).reduce((sum: number, db: any) => sum + (db.potentialSavings || 0), 0) +
+    (analysisResult.natGatewayAnalysis || []).reduce((sum: number, nat: any) => sum + (nat.potentialSavings || 0), 0) +
+    (analysisResult.elastiCacheAnalysis || []).reduce((sum: number, cache: any) => sum + (cache.potentialSavings || 0), 0)
   ) : 0
 
   const totalRecommendations = analysisResult ? (
@@ -101,7 +105,10 @@ export default function DashboardPage() {
     (analysisResult.s3Analysis?.reduce((sum: number, bucket: any) => sum + (bucket.recommendations?.length || 0), 0) || 0) +
     (analysisResult.unusedElasticIPs?.length || 0) +
     (analysisResult.unattachedVolumes?.length || 0) +
-    (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0)
+    (analysisResult.loadBalancerAnalysis?.filter((lb: any) => lb.recommendation !== 'keep').length || 0) +
+    (analysisResult.rdsAnalysis?.reduce((sum: number, db: any) => sum + (db.recommendations?.length || 0), 0) || 0) +
+    (analysisResult.natGatewayAnalysis?.reduce((sum: number, nat: any) => sum + (nat.recommendations?.length || 0), 0) || 0) +
+    (analysisResult.elastiCacheAnalysis?.reduce((sum: number, cache: any) => sum + (cache.recommendations?.length || 0), 0) || 0)
   ) : 0
 
   const navigationItems: NavigationItem[] = [
@@ -840,6 +847,48 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-600 mb-2">Unused IP addresses</p>
               <p className="text-lg font-medium text-green-600">
                 £{(analysisResult.unusedElasticIPs || []).reduce((sum: number, ip: any) => sum + (ip.monthlyCost || 0), 0).toFixed(2)}/month savings
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                  <DatabaseIcon className="text-gray-700" size={20} />
+                  <h4 className="text-lg font-semibold text-gray-900">RDS Databases</h4>
+                </div>
+                <span className="text-2xl font-bold text-orange-600">{analysisResult.rdsAnalysis?.length || 0}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">Database optimization opportunities</p>
+              <p className="text-lg font-medium text-green-600">
+                £{(analysisResult.rdsAnalysis || []).reduce((sum: number, db: any) => sum + (db.potentialSavings || 0), 0).toFixed(2)}/month savings
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                  <CloudIcon className="text-gray-700" size={20} />
+                  <h4 className="text-lg font-semibold text-gray-900">NAT Gateways</h4>
+                </div>
+                <span className="text-2xl font-bold text-purple-600">{analysisResult.natGatewayAnalysis?.length || 0}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">Gateway optimization opportunities</p>
+              <p className="text-lg font-medium text-green-600">
+                £{(analysisResult.natGatewayAnalysis || []).reduce((sum: number, nat: any) => sum + (nat.potentialSavings || 0), 0).toFixed(2)}/month savings
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                  <ServerIcon className="text-gray-700" size={20} />
+                  <h4 className="text-lg font-semibold text-gray-900">ElastiCache</h4>
+                </div>
+                <span className="text-2xl font-bold text-cyan-600">{analysisResult.elastiCacheAnalysis?.length || 0}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">Cache cluster optimizations</p>
+              <p className="text-lg font-medium text-green-600">
+                £{(analysisResult.elastiCacheAnalysis || []).reduce((sum: number, cache: any) => sum + (cache.potentialSavings || 0), 0).toFixed(2)}/month savings
               </p>
             </div>
           </div>

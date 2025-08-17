@@ -226,40 +226,24 @@ terraform apply     # Deploy to AWS
 - **API Gateway Console** - Monitor request/response patterns
 - **Browser DevTools** - Frontend error tracking and network inspection
 
-## Next Steps
+## Recent Achievements (August 17, 2025)
 
-### Immediate Issues (July 28, 2025)
-- 🔴 **Organizations Detection 500 Error** 
-  - Lambda functions need deployment with `terraform apply`
-  - Updated code is ready but not yet deployed
+### ✅ Fixed Organization Account Scanning
+- **Issue**: 404 error when scanning organization member accounts
+- **Root Cause**: Frontend passing AWS account ID instead of internal UUID
+- **Solution**: 
+  - Updated frontend to use correct `account.id` (UUID) instead of `account.accountId`
+  - Fixed organization sync to properly mark accounts with `isOrganization: true`
+  - Clarified architecture: Single Lambda in main account assumes roles in member accounts
+- **Status**: Fully operational - organization accounts can now be scanned successfully
 
-### Recent Improvements (July 28, 2025)
-- ✅ **Enhanced StackSet Deployment**
-  - Fixed issue where only first OU was being deployed to
-  - Now properly deploys to ALL selected OUs in batches
-  - Handles AWS API limits with 10 concurrent operations max
-- ✅ **Persistent Organization View**
-  - Organization accounts now show persistent management UI
-  - Can run analysis directly on organization accounts
-  - Shows deployment status and organization info after refresh
-- ✅ **Unified Onboarding Flow**
-  - New `UnifiedOrganizationOnboarding` component
-  - Single wizard that handles:
-    1. CloudFormation deployment to management account
-    2. Automatic organization detection
-    3. StackSet deployment configuration
-    4. Complete setup in one seamless flow
-  - No more multi-step process - everything in one place!
-
-### Completed in Recent Sessions
-- ✅ **Organization Management UI** - Full StackSet deployment interface
-- ✅ **Authentication Improvements** - Auto-redirect when logged in, Dashboard button
-- ✅ **Account Deletion** - Delete button with confirmation dialog
-- ✅ **Backend CORS Fixes** - Added proper headers to all responses
-- ✅ **Debug analysis persistence** - FIXED: DynamoDB undefined values and API Gateway v2 routing
-- ✅ **Enterprise UI transformation** - Complete redesign to sophisticated multi-panel application
-- ✅ **Dark mode implementation** - Comprehensive theming system with persistence
-- ✅ **Professional icon system** - SVG library replacing all emoji icons
+### ✅ Previous Improvements
+- **Enhanced StackSet Deployment** - Deploys to all OUs in batches with API limit handling
+- **Persistent Organization View** - Management UI persists after refresh
+- **Unified Onboarding Flow** - Single wizard for complete organization setup
+- **Enterprise UI** - Sophisticated multi-panel application with dark mode
+- **Analysis Persistence** - Results cached and auto-loaded on dashboard refresh
+- **One-click CloudFormation** - Frictionless IAM role setup
 
 ### Phase 2: Trust & Security
 - 🔒 **Security documentation** - Read-only permission audit

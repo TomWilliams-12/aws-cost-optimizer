@@ -25,6 +25,8 @@
     "@aws-sdk/client-cloudwatch": "^3.632.0",
     "@aws-sdk/client-elastic-load-balancing": "^3.632.0",
     "@aws-sdk/client-elastic-load-balancing-v2": "^3.632.0",
+    "@aws-sdk/client-rds": "^3.632.0",
+    "@aws-sdk/client-elasticache": "^3.632.0",
     "@aws-sdk/client-secrets-manager": "^3.632.0",
     "@aws-sdk/client-sts": "^3.632.0",
     "@aws-sdk/lib-dynamodb": "^3.632.0",
